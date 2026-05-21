@@ -1,0 +1,141 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;700;900&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+@import url('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');
+
+:root {
+    --background: 0 0% 100%;
+    --foreground: 224 71% 4%;
+    --card: 0 0% 100%;
+    --card-foreground: 224 71% 4%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 71% 4%;
+    --primary: 222 70% 10%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 217 91% 60%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 217 91% 60%;
+    --radius: 0.5rem;
+
+    --navy: #0A1128;
+    --signal: #2563EB;
+    --cyan: #06B6D4;
+}
+
+* {
+    border-color: hsl(var(--border));
+    -webkit-tap-highlight-color: transparent;
+}
+
+html, body, #root {
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+    color: #0A1128;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4 {
+    font-family: 'Chivo', system-ui, sans-serif;
+    letter-spacing: -0.01em;
+}
+
+.font-mono, code {
+    font-family: 'IBM Plex Mono', monospace;
+}
+
+.font-display {
+    font-family: 'Chivo', sans-serif;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* Leaflet adjustments – grayscale tile look from CartoDB */
+.leaflet-container { font-family: 'IBM Plex Sans', sans-serif; }
+
+/* Status colors */
+.status-open { background: #DBEAFE; color: #1E40AF; }
+.status-assigned { background: #EDE9FE; color: #5B21B6; }
+.status-accepted { background: #FEF3C7; color: #92400E; }
+.status-travelling { background: #CFFAFE; color: #155E75; }
+.status-reached_site { background: #D1FAE5; color: #065F46; }
+.status-in_progress { background: #FFEDD5; color: #9A3412; }
+.status-resolved { background: #CCFBF1; color: #115E59; }
+.status-completed { background: #DCFCE7; color: #14532D; }
+.status-rejected { background: #FEE2E2; color: #991B1B; }
+
+.border-status-open { border-color: #3B82F6; }
+.border-status-assigned { border-color: #8B5CF6; }
+.border-status-accepted { border-color: #F59E0B; }
+.border-status-travelling { border-color: #06B6D4; }
+.border-status-reached_site { border-color: #10B981; }
+.border-status-in_progress { border-color: #F97316; }
+.border-status-resolved { border-color: #14B8A6; }
+.border-status-completed_with_signature { border-color: #7C3AED; }
+.border-status-report_generated { border-color: #0891B2; }
+.border-status-closed { border-color: #16A34A; }
+.border-status-completed { border-color: #16A34A; }
+.border-status-rejected { border-color: #EF4444; }
+
+@keyframes ping-soft {
+    75%, 100% { transform: scale(2); opacity: 0; }
+}
+.pulse-dot {
+    position: relative;
+    display: inline-flex;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: #10B981;
+}
+.pulse-dot::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: #10B981;
+    animation: ping-soft 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.bg-navy { background-color: var(--navy); }
+.text-navy { color: var(--navy); }
+.bg-signal { background-color: var(--signal); }
+.text-signal { color: var(--signal); }
+.border-navy { border-color: var(--navy); }
+
+/* Hover lift micro-interaction */
+.hover-lift { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.hover-lift:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(10,17,40,0.08); }
+
+/* Mobile safe area */
+.pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 0.75rem); }
+
+/* Login background overlay */
+.login-bg {
+    background:
+      linear-gradient(135deg, rgba(10,17,40,0.92), rgba(10,17,40,0.72)),
+      url('https://images.unsplash.com/photo-1768697581060-52e2edbee7fa?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTZ8MHwxfHNlYXJjaHwyfHxtb2Rlcm4lMjBjb3Jwb3JhdGUlMjBvZmZpY2UlMjBidWlsZGluZyUyMHNreWxpbmV8ZW58MHx8fHwxNzc4NTU5MjY1fDA&ixlib=rb-4.1.0&q=85') center/cover;
+}
+
+/* Kanban scroll snap on mobile */
+.kanban-scroll { scroll-snap-type: x mandatory; }
+.kanban-col { scroll-snap-align: start; }
+
+/* Signature canvas */
+.sig-canvas { background: #FFFFFF; touch-action: none; }
