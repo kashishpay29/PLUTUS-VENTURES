@@ -1,16 +1,3 @@
-"""
-Plutus Ventures - Iteration 3 backend regression suite.
-
-Covers:
-- Feature 1: Ticket new fields (product_reference_number, oem_reference_number,
-  customer_email required & EmailStr validated)
-- Feature 2: POST /api/tickets/{id}/approve closes ticket, sets approved_at,
-  and attempts mocked closure email (closure_email_status present).
-- Feature 3: Device-history endpoints (list, /filter, /export, DELETE soft-delete,
-  POST /restore). Soft-deleted entries excluded from history listings and /api/tickets.
-- Backward-compat: GET /api/devices/history-export, GET /api/companies,
-  GET /api/dashboard/admin, GET /api/auth/me.
-"""
 import io
 import os
 import uuid
@@ -18,14 +5,11 @@ import uuid
 import pytest
 import requests
 
-# Per review_request: frontend .env points to :8000 but backend listens on :8001
-# directly. Use direct backend URL for these tests.
 BASE_URL = os.environ.get("BACKEND_TEST_URL", "http://localhost:8001").rstrip("/")
 API = f"{BASE_URL}/api"
 
 ADMIN_EMAIL = "admin@plutusventures.com"
 ADMIN_PASSWORD = "admin123"
-
 
 # ---------------------------- fixtures ----------------------------
 
@@ -41,7 +25,6 @@ def admin_token():
     assert "token" in data, f"login response missing token: {data}"
     return data["token"]
 
-
 @pytest.fixture(scope="session")
 def auth(admin_token):
     s = requests.Session()
@@ -50,7 +33,6 @@ def auth(admin_token):
         "Content-Type": "application/json",
     })
     return s
-
 
 @pytest.fixture(scope="session")
 def company_id(auth):
@@ -72,7 +54,6 @@ def company_id(auth):
     cid = r.json().get("id")
     assert cid, f"no id in company response: {r.json()}"
     return cid
-
 
 def _new_ticket_payload(company_id_val, *, customer_email="cust@example.com",
                         prod_ref="PRN-001", oem_ref="OEM-001",
@@ -97,7 +78,6 @@ def _new_ticket_payload(company_id_val, *, customer_email="cust@example.com",
         payload["customer_email"] = "not-an-email" if bad_email else customer_email
     return payload
 
-
 # ---------------------------- Auth basic ----------------------------
 
 class TestAuth:
@@ -118,7 +98,6 @@ class TestAuth:
         assert r.status_code == 200, r.text
         body = r.json()
         assert body.get("email") == ADMIN_EMAIL
-
 
 # ---------------------------- Feature 1: Ticket fields ----------------------------
 
@@ -163,7 +142,6 @@ class TestTicketCreation:
         assert t.get("oem_reference_number") in (None, "")
         assert t["customer_email"] == "cust@example.com"
 
-
 # ---------------------------- Feature 2: Approve flow ----------------------------
 
 class TestApproveFlow:
@@ -198,7 +176,6 @@ class TestApproveFlow:
         g = auth.get(f"{API}/tickets/{tid}")
         assert g.status_code == 200
         assert g.json()["status"] == "closed"
-
 
 # ---------------------------- Feature 3: Device history ----------------------------
 
@@ -361,7 +338,6 @@ class TestDeviceHistory:
         r3 = auth.get(f"{API}/device-history")
         ids3 = {i.get("id") for i in r3.json().get("items", [])}
         assert tid in ids3, "restored ticket missing from device-history"
-
 
 # ---------------------------- Backward-compat endpoints ----------------------------
 

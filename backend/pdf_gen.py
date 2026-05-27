@@ -31,8 +31,8 @@ BORDER = HexColor("#CBD5E1")
 def _header_footer(canvas, doc):
     canvas.saveState()
     width, height = A4
-    company = os.environ.get("COMPANY_NAME", "Plutus Ventures")
-    tagline = "Partnering Your IT Landscape"
+    company = ""
+    tagline = ""
     logo_path = os.path.join(os.path.dirname(__file__), "assets", "plutus_letterhead.jpeg")
     if not os.path.exists(logo_path):
         logo_path = os.path.join(os.path.dirname(__file__), "assets", "plutus_logo.jpeg")
@@ -59,7 +59,7 @@ def _header_footer(canvas, doc):
     canvas.drawString(40 * mm, height - 20 * mm, tagline)
     canvas.setFillColor(SLATE)
     canvas.setFont("Helvetica", 8)
-    canvas.drawString(40 * mm, height - 25 * mm, "IT Service Management • Field Service Report")
+    canvas.drawString(40 * mm, height - 25 * mm, "")
     # Right side meta
     canvas.setFillColor(NAVY)
     canvas.setFont("Helvetica-Bold", 9)
@@ -198,13 +198,22 @@ def build_service_report_pdf(ticket: dict, device: dict, engineer: dict,
     ]))
     story.append(Spacer(1, 8))
 
-    # Engineer
+    # Engineer / Outsource
     story.append(Paragraph("ENGINEER", h2))
-    story.append(kv_table([
-        ("Name", engineer.get("name") if engineer else "—"),
-        ("Email", engineer.get("email") if engineer else "—"),
-        ("Skills", ", ".join(engineer.get("skills", [])) if engineer else "—"),
-    ]))
+    is_outsource = (engineer or {}).get("is_outsource", False)
+    eng_rows = [("Name", engineer.get("name") if engineer else "—")]
+    if is_outsource:
+        if engineer.get("outsource_company"):
+            eng_rows.append(("Location", engineer["outsource_company"]))
+        if engineer.get("phone"):
+            eng_rows.append(("Phone", engineer["phone"]))
+        if engineer.get("outsource_price") is not None:
+            eng_rows.append(("Service Charge", f"₹ {engineer['outsource_price']:,.2f}"))
+        eng_rows.append(("Type", "Outsource Partner"))
+    else:
+        eng_rows.append(("Email", engineer.get("email") if engineer else "—"))
+        eng_rows.append(("Skills", ", ".join(engineer.get("skills", [])) if engineer else "—"))
+    story.append(kv_table(eng_rows))
     story.append(Spacer(1, 8))
 
     # Problem
@@ -290,28 +299,160 @@ def build_service_report_pdf(ticket: dict, device: dict, engineer: dict,
     ]))
     story.append(sig_t)
 
-    # QR code + verification footer
-    try:
-        qr_payload = ticket.get("ticket_number") or ticket.get("id") or ""
-        qr = _qr_image(qr_payload, size_mm=22)
-        qr_row = Table([[
-            qr,
-            Paragraph(
-                f"<b>Verify this report</b><br/>"
-                f"<font size='8' color='#475569'>Scan the QR to verify the ticket reference."
-                f" Ticket #: <b>{qr_payload}</b><br/>"
-                f"Report ID: {(ticket.get('report_id') or '—')}</font>",
-                body),
-        ]], colWidths=[28 * mm, 152 * mm])
-        qr_row.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+
+
+    doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)
+    pdf = buf.getvalue()
+    buf.close()
+    return pdf
+
+
+def build_outsource_internal_pdf(ticket: dict, outsource: dict, created_by: str = "") -> bytes:
+    """
+    Internal PDF for accounts team — shows outsource engineer details,
+    ticket info, device, and service charge. NOT shared with client.
+    """
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=15 * mm, rightMargin=15 * mm,
+        topMargin=38 * mm, bottomMargin=18 * mm,
+        title=f"Outsource Internal — {ticket.get('ticket_no', '')}",
+    )
+    styles = getSampleStyleSheet()
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"],
+                        textColor=NAVY, fontName="Helvetica-Bold",
+                        spaceAfter=6, fontSize=12)
+    body = ParagraphStyle("body", parent=styles["BodyText"],
+                          fontName="Helvetica", fontSize=9, leading=12,
+                          textColor=HexColor("#0F172A"))
+    small = ParagraphStyle("small", parent=body, fontSize=8, textColor=SLATE)
+    orange = HexColor("#F97316")
+    orange_light = HexColor("#FFF7ED")
+    orange_border = HexColor("#FED7AA")
+
+    story = []
+
+    # ── Internal banner ──────────────────────────────────────────────────────
+    banner = Table([[
+        Paragraph("<b>INTERNAL DOCUMENT — ACCOUNTS USE ONLY</b>", ParagraphStyle(
+            "banner", parent=body, textColor=HexColor("#FFFFFF"),
+            fontName="Helvetica-Bold", fontSize=10, alignment=TA_CENTER
+        ))
+    ]], colWidths=[180 * mm])
+    banner.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), orange),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("ROUNDEDCORNERS", [4]),
+    ]))
+    story.append(banner)
+    story.append(Spacer(1, 10))
+
+    # ── Ticket summary strip ──────────────────────────────────────────────────
+    title_t = Table([[
+        Paragraph(f"<b>Ticket {ticket.get('ticket_no', '')}</b>", h2),
+        Paragraph(
+            f"<font color='#475569' size='8'>Status</font><br/>"
+            f"<b>{ticket.get('status', '').upper().replace('_', ' ')}</b>", body),
+        Paragraph(
+            f"<font color='#475569' size='8'>Date</font><br/>"
+            f"<b>{(ticket.get('created_at') or '')[:10]}</b>", body),
+        Paragraph(
+            f"<font color='#475569' size='8'>Created by</font><br/>"
+            f"<b>{created_by or '—'}</b>", body),
+    ]], colWidths=[60 * mm, 40 * mm, 40 * mm, 40 * mm])
+    title_t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), LIGHT),
+        ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(title_t)
+    story.append(Spacer(1, 10))
+
+    def kv_table(rows, col1_w=50, col2_w=130):
+        t = Table(
+            [[Paragraph(f"<b>{k}</b>", body), Paragraph(str(v or "—"), body)]
+             for k, v in rows],
+            colWidths=[col1_w * mm, col2_w * mm]
+        )
+        t.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.2, BORDER),
         ]))
-        story.append(Spacer(1, 6))
-        story.append(qr_row)
-    except Exception as e:
-        logger.error(f"QR generation failed: {e}")
+        return t
+
+    # ── Outsource Engineer Details ─────────────────────────────────────────────
+    story.append(Paragraph("OUTSOURCE ENGINEER", h2))
+    eng_rows = [
+        ("Engineer Name", outsource.get("name", "—")),
+        ("Location",      outsource.get("location") or outsource.get("company", "—")),
+        ("Phone",         outsource.get("phone", "—")),
+        ("Notes",         outsource.get("notes") or "—"),
+    ]
+    story.append(kv_table(eng_rows))
+    story.append(Spacer(1, 10))
+
+    # ── Service Charge (highlight box) ────────────────────────────────────────
+    price = outsource.get("price")
+    price_str = f"Rs. {float(price):,.2f}" if price is not None else "Not specified"
+    charge_t = Table([[
+        Paragraph("<b>SERVICE CHARGE</b>", ParagraphStyle(
+            "charge_label", parent=body, textColor=orange,
+            fontName="Helvetica-Bold", fontSize=11
+        )),
+        Paragraph(f"<b>{price_str}</b>", ParagraphStyle(
+            "charge_val", parent=body, textColor=NAVY,
+            fontName="Helvetica-Bold", fontSize=16, alignment=TA_RIGHT
+        )),
+    ]], colWidths=[90 * mm, 90 * mm])
+    charge_t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), orange_light),
+        ("BOX", (0, 0), (-1, -1), 1.5, orange_border),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ("TOPPADDING", (0, 0), (-1, -1), 14),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
+    ]))
+    story.append(charge_t)
+    story.append(Spacer(1, 10))
+
+    # ── Customer & Ticket Info ─────────────────────────────────────────────────
+    story.append(Paragraph("TICKET & CUSTOMER", h2))
+    story.append(kv_table([
+        ("Customer",    ticket.get("customer_name")),
+        ("Company",     ticket.get("customer_company")),
+        ("Phone",       ticket.get("customer_phone")),
+        ("Problem",     ticket.get("problem_description")),
+    ]))
+    story.append(Spacer(1, 10))
+
+    # ── Device Info ───────────────────────────────────────────────────────────
+    story.append(Paragraph("DEVICE", h2))
+    story.append(kv_table([
+        ("Brand / Model", f"{ticket.get('device_brand', '')} {ticket.get('device_model', '')}".strip() or "—"),
+        ("Serial No.",    ticket.get("device_serial") or ticket.get("device_id") or "—"),
+    ]))
+    story.append(Spacer(1, 16))
+
+    # ── Signature block ───────────────────────────────────────────────────────
+    sig_t = Table([[
+        Paragraph("Approved by:", small),
+        Paragraph("____________________________", small),
+        Paragraph("Date:", small),
+        Paragraph("____________________________", small),
+    ]], colWidths=[25 * mm, 70 * mm, 15 * mm, 70 * mm])
+    sig_t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(sig_t)
 
     doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)
     pdf = buf.getvalue()

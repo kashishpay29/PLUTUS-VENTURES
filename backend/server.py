@@ -25,6 +25,7 @@ from fastapi import (
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from pymongo import MongoClient
+from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, EmailStr
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -36,7 +37,7 @@ from auth import (
     decode_token,
 )
 from storage_client import init_storage, put_object, get_object
-from pdf_gen import build_service_report_pdf
+from pdf_gen import build_service_report_pdf, build_outsource_internal_pdf
 
 # ---------- Setup ----------
 logging.basicConfig(
@@ -283,6 +284,17 @@ def clean(d):
     return d
 
 
+def _sub_admin_ticket_scope(user: dict) -> Dict[str, Any]:
+    """Limit sub-admin ticket visibility to assigned companies plus own tickets."""
+    if user.get("role") != "sub_admin":
+        return {}
+    assigned_company_ids = user.get("assigned_company_ids") or []
+    scope = [{"created_by": user["id"]}]
+    if assigned_company_ids:
+        scope.append({"company_id": {"$in": assigned_company_ids}})
+    return {"$or": scope}
+
+
 def _seq(name: str) -> int:
     doc = db.counters.find_one_and_update(
         {"_id": name}, {"$inc": {"sequence_value": 1}},
@@ -329,6 +341,8 @@ class EngineerCreate(BaseModel):
     employee_id: Optional[str] = None
     designation: Optional[str] = None
     address: Optional[str] = None
+    is_remote: Optional[bool] = False
+    oem_number: Optional[str] = None
 
 
 class EngineerUpdate(BaseModel):
@@ -341,6 +355,8 @@ class EngineerUpdate(BaseModel):
     employee_id: Optional[str] = None
     designation: Optional[str] = None
     address: Optional[str] = None
+    is_remote: Optional[bool] = None
+    oem_number: Optional[str] = None
 
 
 class CompanyCreate(BaseModel):
@@ -400,7 +416,20 @@ class TicketCreate(BaseModel):
 
 
 class TicketAssign(BaseModel):
-    engineer_id: str
+    engineer_id: Optional[str] = None
+    is_outsource: bool = False
+    outsource_name: Optional[str] = None
+    outsource_company: Optional[str] = None
+    outsource_phone: Optional[str] = None
+    outsource_price: Optional[float] = None
+    outsource_notes: Optional[str] = None
+
+
+class ServiceReportCreate(BaseModel):
+    work_done: str
+    resolution_summary: Optional[str] = None
+    parts_used: Optional[List[dict]] = []
+    customer_signed_name: Optional[str] = None
 
 
 class StatusUpdate(BaseModel):
@@ -459,8 +488,12 @@ async def startup():
         db.tickets.drop_index("ticket_number_1")
     except Exception:
         pass
+    # Rebuild serial_number as a partial unique index. Older builds created a
+    # plain unique index, which treats multiple null/missing values as duplicates.
     try:
-        db.devices.drop_index("serial_number_1")
+        for idx in db.devices.list_indexes():
+            if "serial_number" in idx.get("key", {}):
+                db.devices.drop_index(idx["name"])
     except Exception:
         pass
 
@@ -515,7 +548,11 @@ async def startup():
     db.tickets.create_index("company_id")
     db.devices.create_index("warranty_expiry")
     db.devices.create_index("device_id", unique=True)
-    db.devices.create_index("serial_number", sparse=True)
+    db.devices.create_index(
+        "serial_number",
+        unique=True,
+        partialFilterExpression={"serial_number": {"$type": "string"}},
+    )  # globally unique when provided; blank serials are not indexed
     db.devices.create_index("company_id")
     db.ticket_status_logs.create_index("ticket_id")
     db.ticket_status_logs.create_index([("timestamp", -1)])
@@ -705,16 +742,7 @@ async def verify_otp(request: Request, payload: OTPVerifyRequest):
         if expires_at:
             if expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
                 raise HTTPException(status_code=400, detail="OTP expired")
-
-        
-
-        # #  Expiry check (SAFE)
-        # from datetime import timezone
-
-        # if expires_at:
-        #     if expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
-        #         raise HTTPException(status_code=400, detail="OTP expired")
-            
+  
 
         #  Mark consumed
         db.otp_challenges.update_one(
@@ -751,107 +779,6 @@ async def verify_otp(request: Request, payload: OTPVerifyRequest):
     except Exception as e:
         print("VERIFY OTP ERROR:", str(e))  # 👈 VERY IMPORTANT
         raise HTTPException(status_code=500, detail="Internal error")
-# @api.post("/auth/verify-otp")
-# @limiter.limit("20/minute")
-# async def verify_otp(request: Request, payload: OTPVerifyRequest):
-#     email = payload.email.lower().strip()
-
-#     challenge = db.otp_challenges.find_one({
-#         "id": payload.challenge_id,
-#         "email": email,
-#         "consumed": False,
-#     })
-
-#     if not challenge:
-#         raise HTTPException(status_code=400, detail="Invalid challenge")
-
-#     expires_at = challenge.get("expires_at")
-#     if not expires_at:
-#         raise HTTPException(status_code=400, detail="Invalid OTP data")
-
-#     if expires_at < datetime.now(timezone.utc):
-#         raise HTTPException(status_code=400, detail="OTP expired")
-
-#     if challenge["otp"] != payload.otp.strip():
-#         raise HTTPException(status_code=400, detail="Incorrect OTP")
-
-#     db.otp_challenges.update_one(
-#         {"id": payload.challenge_id},
-#         {"$set": {"consumed": True}}
-#     )
-
-#     user_full = db.users.find_one({"email": email})
-
-#     if not user_full:
-#         raise HTTPException(status_code=404, detail="User not found")
-
-#     db.users.update_one(
-#         {"email": email},
-#         {"$set": {"last_login": now_iso()}}
-#     )
-
-#     # SAFE TOKEN CREATION
-#     token = create_access_token({
-#         "sub": str(user_full["_id"]),
-#         "email": user_full["email"],
-#         "role": user_full.get("role", "admin")
-#     })
-
-#     return {
-#         "token": token,
-#         "user": {
-#             "email": user_full["email"],
-#             "role": user_full.get("role", "admin")
-#         }
-#     }
-# @api.post("/auth/verify-otp")
-# @limiter.limit("20/minute")
-# async def verify_otp(request: Request, payload: OTPVerifyRequest):
-#     email = payload.email.lower().strip()
-
-#     challenge = db.otp_challenges.find_one({
-#         "id": payload.challenge_id,
-#         "email": email,
-#         "consumed": False,
-#     })
-
-#     if not challenge:
-#         raise HTTPException(status_code=400, detail="Invalid challenge")
-
-#     if challenge["expires_at"].replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
-#         raise HTTPException(status_code=400, detail="OTP expired")
-
-#     if challenge["otp"] != payload.otp.strip():
-#         raise HTTPException(status_code=400, detail="Incorrect OTP")
-
-#     db.otp_challenges.update_one(
-#         {"id": payload.challenge_id},
-#         {"$set": {"consumed": True}}
-#     )
-
-#     user_full = db.users.find_one({"email": email})
-
-#     if not user_full:
-#         raise HTTPException(status_code=404, detail="User not found")
-
-#     db.users.update_one(
-#         {"email": email},
-#         {"$set": {"last_login": now_iso()}}
-#     )
-
-#     token = create_access_token(
-#         str(user_full["_id"]),
-#         user_full["email"],
-#         user_full.get("role", "admin")
-#     )
-
-#     return {
-#         "token": token,
-#         "user": {
-#             "email": user_full["email"],
-#             "role": user_full.get("role", "admin")
-#         }
-#     }
 
 
 @api.get("/auth/me")
@@ -896,6 +823,8 @@ async def create_engineer(payload: EngineerCreate):
         "employee_id": payload.employee_id,
         "designation": payload.designation,
         "address": payload.address,
+        "is_remote": payload.is_remote or False,
+        "oem_number": payload.oem_number,
         "password_hash": hash_password(payload.password),
         "is_active": True,
         "is_available": True,
@@ -907,13 +836,28 @@ async def create_engineer(payload: EngineerCreate):
     return clean({**doc})
 
 
-@api.patch("/engineers/{eng_id}", dependencies=[Depends(require_admin)])
-async def update_engineer(eng_id: str, payload: EngineerUpdate):
-    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
-    if "password" in updates:
-        updates["password_hash"] = hash_password(updates.pop("password"))
+@api.patch("/engineers/{eng_id}")
+async def update_engineer(eng_id: str, payload: EngineerUpdate,
+                          current_user=Depends(get_current_user)):
+    role = current_user.get("role")
+    # Engineers can only update their own is_remote and oem_number
+    if role == "engineer":
+        if current_user.get("id") != eng_id:
+            raise HTTPException(status_code=403, detail="Cannot update another engineer")
+        allowed = {"is_remote", "oem_number"}
+        updates = {k: v for k, v in payload.model_dump().items()
+                   if k in allowed and v is not None}
+        # Allow setting is_remote to False (it's falsy so needs special handling)
+        if payload.is_remote is not None:
+            updates["is_remote"] = payload.is_remote
+    elif role in ("admin", "sub_admin"):
+        updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+        if "password" in updates:
+            updates["password_hash"] = hash_password(updates.pop("password"))
+    else:
+        raise HTTPException(status_code=403, detail="Access denied")
     updates["updated_at"] = now_iso()
-    if not updates:
+    if len(updates) <= 1:
         raise HTTPException(status_code=400, detail="No changes")
     res = db.users.update_one({"id": eng_id, "role": "engineer"},
                                {"$set": updates})
@@ -927,6 +871,130 @@ async def delete_engineer(eng_id: str):
     res = db.users.delete_one({"id": eng_id, "role": "engineer"})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Engineer not found")
+    return {"ok": True}
+
+
+# ---------- SUB-ADMINS ----------
+class SubAdminCreate(BaseModel):
+    name: str
+    email: EmailStr
+    phone: Optional[str] = None
+    password: str
+    employee_id: Optional[str] = None
+    designation: Optional[str] = None
+    address: Optional[str] = None
+
+
+class SubAdminUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    is_active: Optional[bool] = None
+    password: Optional[str] = None
+    employee_id: Optional[str] = None
+    designation: Optional[str] = None
+    address: Optional[str] = None
+    # NOTE: assigned_company_ids is intentionally excluded here.
+    # Only the sub-admin themselves can manage their own company assignments
+    # via PATCH /sub-admins/me/companies
+
+
+class SubAdminSelfCompaniesUpdate(BaseModel):
+    assigned_company_ids: List[str] = []
+
+
+@api.get("/sub-admins", dependencies=[Depends(require_admin)])
+async def list_sub_admins(q: Optional[str] = None):
+    query: Dict[str, Any] = {"role": "sub_admin"}
+    if q:
+        query["$or"] = [
+            {"name": {"$regex": q, "$options": "i"}},
+            {"email": {"$regex": q, "$options": "i"}},
+            {"employee_id": {"$regex": q, "$options": "i"}},
+        ]
+    items = list(db.users.find(query, {"_id": 0, "password_hash": 0}).sort("created_at", -1))
+    return {"items": items, "total": len(items)}
+
+
+@api.post("/sub-admins", dependencies=[Depends(require_admin)])
+async def create_sub_admin(payload: SubAdminCreate):
+    email = payload.email.lower().strip()
+    if db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already exists")
+    doc = {
+        "id": new_id(),
+        "email": email,
+        "name": payload.name,
+        "role": "sub_admin",
+        "phone": payload.phone,
+        "employee_id": payload.employee_id,
+        "designation": payload.designation,
+        "address": payload.address,
+        "password_hash": hash_password(payload.password),
+        "is_active": True,
+        "status": "active",
+        "assigned_company_ids": [],
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    db.users.insert_one(doc)
+    return clean({**doc})
+
+
+@api.patch("/sub-admins/{sub_admin_id}", dependencies=[Depends(require_admin)])
+async def update_sub_admin(sub_admin_id: str, payload: SubAdminUpdate):
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if "password" in updates:
+        updates["password_hash"] = hash_password(updates.pop("password"))
+    updates["updated_at"] = now_iso()
+    if len(updates) == 1:  # only updated_at
+        raise HTTPException(status_code=400, detail="No changes provided")
+    res = db.users.update_one({"id": sub_admin_id, "role": "sub_admin"}, {"$set": updates})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Sub-admin not found")
+    return clean(db.users.find_one({"id": sub_admin_id}, {"_id": 0, "password_hash": 0}))
+
+
+@api.patch("/sub-admins/me/companies")
+async def update_my_companies(
+    payload: SubAdminSelfCompaniesUpdate,
+    user=Depends(get_current_user),
+):
+    """Sub-admin self-service: update their own assigned company list.
+    Admin role is explicitly blocked — only sub_admin may call this."""
+    if user.get("role") != "sub_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only sub-admins can manage their own company assignments",
+        )
+    updated_at = now_iso()
+    db.users.update_one(
+        {"id": user["id"], "role": "sub_admin"},
+        {"$set": {
+            "assigned_company_ids": payload.assigned_company_ids,
+            "updated_at": updated_at,
+        }},
+    )
+    db.ticket_status_logs.insert_one({
+        "id": new_id(),
+        "ticket_id": None,
+        "actor_type": "sub_admin_assignment",
+        "target_user_id": user["id"],
+        "target_user_name": user.get("name"),
+        "old_companies": user.get("assigned_company_ids", []),
+        "new_companies": payload.assigned_company_ids,
+        "changed_by": user["id"],
+        "changed_by_name": user.get("name"),
+        "changed_by_role": user.get("role"),
+        "timestamp": updated_at,
+    })
+    return clean(db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0}))
+
+
+@api.delete("/sub-admins/{sub_admin_id}", dependencies=[Depends(require_admin)])
+async def delete_sub_admin(sub_admin_id: str):
+    res = db.users.delete_one({"id": sub_admin_id, "role": "sub_admin"})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Sub-admin not found")
     return {"ok": True}
 
 
@@ -970,8 +1038,8 @@ async def get_company(company_id: str, user=Depends(get_current_user)):
     return {"company": c, "tickets": tickets, "devices": devices}
 
 
-@api.post("/companies", dependencies=[Depends(require_admin)])
-async def create_company(payload: CompanyCreate, admin=Depends(require_admin)):
+@api.post("/companies", dependencies=[Depends(require_sub_admin)])
+async def create_company(payload: CompanyCreate, admin=Depends(require_sub_admin)):
     name = payload.company_name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Company name required")
@@ -994,6 +1062,8 @@ async def create_company(payload: CompanyCreate, admin=Depends(require_admin)):
         "pincode": payload.pincode,
         "status": "active",
         "created_by": admin["id"],
+        "created_by_name": admin.get("name", ""),
+        "created_by_role": admin.get("role", ""),
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
@@ -1001,7 +1071,7 @@ async def create_company(payload: CompanyCreate, admin=Depends(require_admin)):
     return clean({**doc})
 
 
-@api.put("/companies/{company_id}", dependencies=[Depends(require_admin)])
+@api.put("/companies/{company_id}", dependencies=[Depends(require_sub_admin)])
 async def update_company(company_id: str, payload: CompanyUpdate):
     existing = db.companies.find_one({"id": company_id})
     if not existing:
@@ -1155,6 +1225,9 @@ def _build_device_history_query(company: Optional[str], start_date: Optional[str
         q["is_deleted"] = True
     elif not include_deleted:
         q["is_deleted"] = {"$ne": True}
+
+    q["status"] = {"$in": ["assigned", "closed", "rejected", "report_generated", "completed_with_signature"]}
+
     if company:
         company_doc_ids = [
             c["id"] for c in db.companies.find(
@@ -1238,15 +1311,16 @@ async def list_device_history(
     only_deleted: bool = False,
     user=Depends(require_sub_admin),
 ):
-    """List device service history with optional company / date-range filters.
-
-    Soft-deleted records are excluded by default.
-    Pass include_deleted=true to surface both, or only_deleted=true to surface
-    only soft-deleted records (used by the restore UI).
-    """
+    """List device service history with optional company / date-range filters."""
     q = _build_device_history_query(company, start_date, end_date,
                                     include_deleted=include_deleted,
                                     only_deleted=only_deleted)
+    if user.get("role") == "sub_admin":
+        assigned_ids = user.get("assigned_company_ids") or []
+        scope = [{"created_by": user["id"]}]
+        if assigned_ids:
+            scope.append({"company_id": {"$in": assigned_ids}})
+        q["$or"] = scope
     tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).limit(2000))
     return {"items": _enrich_history_rows(tickets), "total": len(tickets)}
 
@@ -1264,6 +1338,12 @@ async def filter_device_history(
     q = _build_device_history_query(company, start_date, end_date,
                                     include_deleted=include_deleted,
                                     only_deleted=only_deleted)
+    if user.get("role") == "sub_admin":
+        assigned_ids = user.get("assigned_company_ids") or []
+        scope = [{"created_by": user["id"]}]
+        if assigned_ids:
+            scope.append({"company_id": {"$in": assigned_ids}})
+        q["$or"] = scope
     tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).limit(2000))
     return {"items": _enrich_history_rows(tickets), "total": len(tickets)}
 
@@ -1288,6 +1368,12 @@ async def export_device_history_v2(
         raise HTTPException(status_code=500, detail="openpyxl not installed")
 
     q = _build_device_history_query(company, start_date, end_date)
+    if user.get("role") == "sub_admin":
+        assigned_ids = user.get("assigned_company_ids") or []
+        scope = [{"created_by": user["id"]}]
+        if assigned_ids:
+            scope.append({"company_id": {"$in": assigned_ids}})
+        q["$or"] = scope
     tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).limit(5000))
     rows = _enrich_history_rows(tickets)
 
@@ -1362,6 +1448,11 @@ async def soft_delete_device_history(ticket_id: str, user=Depends(require_sub_ad
     if not ticket:
         raise HTTPException(status_code=404, detail="Device history record not found")
 
+    if user.get("role") == "sub_admin":
+        company_ids = user.get("assigned_company_ids") or []
+        if ticket.get("company_id") not in company_ids:
+            raise HTTPException(status_code=403, detail="Not authorized to delete this record")
+
     if ticket.get("status") not in (
         "closed", "rejected", "report_generated", "completed_with_signature"
     ):
@@ -1388,6 +1479,12 @@ async def restore_device_history(ticket_id: str, user=Depends(require_sub_admin)
     ticket = db.tickets.find_one({"id": ticket_id}) or db.tickets.find_one({"ticket_no": ticket_id})
     if not ticket:
         raise HTTPException(status_code=404, detail="Device history record not found")
+
+    if user.get("role") == "sub_admin":
+        company_ids = user.get("assigned_company_ids") or []
+        if ticket.get("company_id") not in company_ids:
+            raise HTTPException(status_code=403, detail="Not authorized to restore this record")
+
     db.tickets.update_one(
         {"id": ticket["id"]},
         {"$set": {"is_deleted": False, "updated_at": now_iso()},
@@ -1418,8 +1515,13 @@ def _get_or_create_device(company: dict, d: DeviceCreate) -> dict:
     serial = (d.serial_number or "").strip() or None
     existing = None
     if serial:
-        existing = db.devices.find_one({"serial_number": serial,
-                                        "company_id": company["id"]})
+        # Serial number is globally unique across all companies
+        existing = db.devices.find_one({"serial_number": serial})
+        if existing and existing.get("company_id") != company["id"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Serial number '{serial}' is already registered under a different company."
+            )
     if existing:
         updates = {}
         if d.warranty_status != existing.get("warranty_status"):
@@ -1439,7 +1541,6 @@ def _get_or_create_device(company: dict, d: DeviceCreate) -> dict:
         "device_id": dev_id,
         "company_id": company["id"],
         "company_name": company["company_name"],
-        "serial_number": serial,
         "brand": d.brand,
         "model": d.model,
         "device_name": d.device_name or f"{d.brand} {d.model}",
@@ -1452,6 +1553,8 @@ def _get_or_create_device(company: dict, d: DeviceCreate) -> dict:
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
+    if serial:
+        doc["serial_number"] = serial
     db.devices.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -1488,16 +1591,26 @@ def _ticket_full(ticket: dict) -> dict:
         eng = db.users.find_one({"id": ticket["assigned_engineer_id"]},
                                 {"_id": 0, "password_hash": 0})
         ticket["engineer"] = eng
+    if ticket.get("created_by"):
+        creator = db.users.find_one({"id": ticket["created_by"]},
+                                    {"_id": 0, "id": 1, "name": 1, "role": 1, "email": 1})
+        if creator:
+            ticket["created_by_user"] = creator
     return ticket
 
 
-@api.post("/tickets", dependencies=[Depends(require_admin)])
-async def create_ticket(payload: TicketCreate, admin=Depends(require_admin)):
+@api.post("/tickets")
+async def create_ticket(payload: TicketCreate, admin=Depends(require_sub_admin)):
     company = db.companies.find_one({"id": payload.company_id})
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
     if company.get("status") == "inactive":
         raise HTTPException(status_code=400, detail="Company is inactive")
+
+    if admin.get("role") == "sub_admin":
+        company_ids = admin.get("assigned_company_ids") or []
+        if payload.company_id not in company_ids:
+            raise HTTPException(status_code=403, detail="Not authorized to create tickets for this company")
 
     device = _get_or_create_device(company, payload.device)
     ticket_no = next_ticket_number()
@@ -1557,6 +1670,8 @@ async def list_tickets(
         q["company_id"] = company_id
     if user["role"] == "engineer" or mine:
         q["assigned_engineer_id"] = user["id"]
+    if user["role"] == "sub_admin":
+        q.update(_sub_admin_ticket_scope(user))
     tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).limit(500))
     for t in tickets:
         if t.get("device_id"):
@@ -1610,40 +1725,163 @@ async def get_ticket(ticket_id: str, user=Depends(get_current_user)):
     return full
 
 
-@api.post("/tickets/{ticket_id}/assign", dependencies=[Depends(require_admin)])
+@api.post("/tickets/{ticket_id}/assign")
 async def assign_ticket(ticket_id: str, payload: TicketAssign,
-                        admin=Depends(require_admin)):
-    eng = db.users.find_one(
-        {"id": payload.engineer_id, "role": "engineer", "is_active": True}
-    )
-    if not eng:
-        raise HTTPException(status_code=404, detail="Engineer not found")
+                        admin=Depends(require_sub_admin)):
     ticket = db.tickets.find_one({"id": ticket_id})
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    old = ticket["status"]
-    db.tickets.update_one(
-        {"id": ticket_id},
-        {"$set": {
-            "assigned_engineer_id": payload.engineer_id,
-            "assigned_engineer_name": eng["name"],
+    old_status = ticket["status"]
+
+    if payload.is_outsource:
+        if not payload.outsource_name:
+            raise HTTPException(status_code=400, detail="Outsource engineer name required")
+        db.tickets.update_one({"id": ticket_id}, {"$set": {
+            "assigned_engineer_id": None,
+            "assigned_engineer_name": payload.outsource_name,
+            "is_outsource": True,
+            "outsource": {
+                "name": payload.outsource_name,
+                "location": payload.outsource_company,
+                "phone": payload.outsource_phone,
+                "price": payload.outsource_price,
+                "notes": payload.outsource_notes,
+            },
             "status": "assigned",
             "updated_at": now_iso(),
-        }}
-    )
-    _log_status(ticket_id, admin, old, "assigned", f"Assigned to {eng['name']}")
-    db.notifications.insert_one({
-        "id": new_id(),
-        "user_id": payload.engineer_id,
-        "title": "New ticket assigned",
-        "message": f"Ticket {ticket['ticket_no']} has been assigned to you",
-        "type": "ticket_assigned",
-        "ticket_id": ticket_id,
-        "read_status": False,
-        "read": False,
-        "created_at": now_iso(),
-    })
+        }})
+        _log_status(ticket_id, admin, old_status, "assigned",
+                    f"Outsourced to {payload.outsource_name}")
+    else:
+        if not payload.engineer_id:
+            raise HTTPException(status_code=400, detail="Engineer ID required")
+        eng = db.users.find_one(
+            {"id": payload.engineer_id, "role": "engineer", "is_active": True}
+        )
+        if not eng:
+            raise HTTPException(status_code=404, detail="Engineer not found")
+        db.tickets.update_one({"id": ticket_id}, {"$set": {
+            "assigned_engineer_id": payload.engineer_id,
+            "assigned_engineer_name": eng["name"],
+            "is_outsource": False,
+            "outsource": None,
+            "status": "assigned",
+            "updated_at": now_iso(),
+        }})
+        _log_status(ticket_id, admin, old_status, "assigned", f"Assigned to {eng['name']}")
+        db.notifications.insert_one({
+            "id": new_id(),
+            "user_id": payload.engineer_id,
+            "title": "New ticket assigned",
+            "message": f"Ticket {ticket['ticket_no']} has been assigned to you",
+            "type": "ticket_assigned",
+            "ticket_id": ticket_id,
+            "read_status": False,
+            "read": False,
+            "created_at": now_iso(),
+        })
     return _ticket_full(db.tickets.find_one({"id": ticket_id}, {"_id": 0}))
+
+
+@api.post("/tickets/{ticket_id}/outsource-complete")
+async def outsource_complete(ticket_id: str, admin=Depends(require_sub_admin)):
+    """Mark an outsourced ticket as completed manually by admin/sub-admin."""
+    ticket = db.tickets.find_one({"id": ticket_id})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if not ticket.get("is_outsource"):
+        raise HTTPException(status_code=400, detail="Not an outsource ticket")
+    db.tickets.update_one({"id": ticket_id}, {"$set": {
+        "status": "closed",
+        "completed_at": now_iso(),
+        "updated_at": now_iso(),
+    }})
+    _log_status(ticket_id, admin, ticket["status"], "closed",
+                "Outsource job marked complete manually")
+    return _ticket_full(db.tickets.find_one({"id": ticket_id}, {"_id": 0}))
+
+
+@api.get("/tickets/{ticket_id}/outsource-pdf")
+async def outsource_internal_pdf(ticket_id: str, auth: Optional[str] = None,
+                                  user=Depends(get_current_user)):
+    """Generate and stream the internal outsource PDF for accounts team."""
+    ticket = db.tickets.find_one({"id": ticket_id})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if not ticket.get("is_outsource"):
+        raise HTTPException(status_code=400, detail="Not an outsource ticket")
+    outsource = ticket.get("outsource") or {}
+    creator = db.users.find_one({"id": ticket.get("created_by")}, {"_id": 0, "name": 1})
+    created_by = creator.get("name", "") if creator else ""
+    pdf_bytes = build_outsource_internal_pdf(ticket, outsource, created_by)
+    filename = f"Outsource-Internal-{ticket.get('ticket_no', ticket_id)}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@api.post("/tickets/{ticket_id}/service-report")
+async def create_service_report(ticket_id: str, payload: ServiceReportCreate,
+                                 admin=Depends(require_sub_admin)):
+    """Generate a client-facing service report PDF for outsource or admin-closed tickets."""
+    ticket = db.tickets.find_one({"id": ticket_id})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    device   = db.devices.find_one({"device_id": ticket.get("device_id")}, {"_id": 0}) or {}
+    company  = db.companies.find_one({"id": ticket.get("company_id")}, {"_id": 0}) if ticket.get("company_id") else None
+    outsource = ticket.get("outsource") or {}
+
+    if ticket.get("is_outsource"):
+        engineer_info = {
+            "name": outsource.get("name", ""),
+            "email": outsource.get("company", ""),
+            "phone": outsource.get("phone", ""),
+            "skills": ["Outsource Partner"],
+            "is_outsource": True,
+            "outsource_company": outsource.get("location", outsource.get("company", "")),
+            "outsource_price": outsource.get("price"),
+        }
+    else:
+        engineer_info = db.users.find_one(
+            {"id": ticket.get("assigned_engineer_id")},
+            {"_id": 0, "password_hash": 0}
+        ) or {}
+
+    report_id = new_id()
+    report = {
+        "id": report_id,
+        "ticket_id": ticket_id,
+        "work_notes": payload.work_done,
+        "resolution_summary": payload.resolution_summary or payload.work_done,
+        "parts_used": payload.parts_used or [],
+        "customer_signature": None,
+        "customer_signed_name": payload.customer_signed_name or ticket.get("customer_name"),
+        "signed_at": now_iso(),
+        "outsource": outsource,
+        "created_by_name": admin.get("name"),
+        "photos_before": [],
+        "photos_after": [],
+    }
+
+    ticket_for_pdf = {**ticket, "report_id": report_id, "company": company}
+    pdf_bytes = build_service_report_pdf(
+        ticket=ticket_for_pdf, device=device,
+        engineer=engineer_info, report=report,
+    )
+    pdf_path = f"reports/{ticket.get('ticket_no', ticket_id)}-service-report.pdf"
+    put_object(pdf_path, pdf_bytes, "application/pdf")
+
+    db.service_reports.replace_one({"ticket_id": ticket_id}, report, upsert=True)
+    db.tickets.update_one({"id": ticket_id}, {"$set": {
+        "report_id": report_id,
+        "pdf_path": pdf_path,
+        "pdf_url": f"/api/files/{pdf_path}",
+        "updated_at": now_iso(),
+    }})
+    return {"ok": True, "pdf_path": pdf_path}
 
 
 @api.post("/tickets/{ticket_id}/status")
@@ -2105,11 +2343,20 @@ async def attendance_history(user=Depends(require_engineer)):
 
 
 # ---------- DASHBOARD ----------
-@api.get("/dashboard/admin", dependencies=[Depends(require_admin)])
-async def admin_dashboard():
+@api.get("/dashboard/admin", dependencies=[Depends(require_sub_admin)])
+async def admin_dashboard(user=Depends(get_current_user)):
     try:
+        # Scope by assigned companies for sub_admin
+        assigned_company_ids = []
+        company_scope = {}
+        if user.get("role") == "sub_admin":
+            assigned_company_ids = user.get("assigned_company_ids") or []
+            company_scope = _sub_admin_ticket_scope(user)
+        ticket_scope = {"is_deleted": {"$ne": True}, **company_scope}
+
         # ---- Ticket counts (ONE QUERY instead of MANY) ----
         ticket_counts_raw = list(db.tickets.aggregate([
+            {"$match": ticket_scope},
             {
                 "$group": {
                     "_id": "$status",
@@ -2124,6 +2371,11 @@ async def admin_dashboard():
             counts[item["_id"]] = item["count"]
 
         counts["total"] = sum(counts.values())
+        counts["completed"] = sum(
+            counts.get(s, 0) for s in [
+                "completed_with_signature", "report_generated", "closed"
+            ]
+        )
         counts["active"] = sum(
             counts.get(s, 0) for s in [
                 "open", "assigned", "accepted", "travelling",
@@ -2132,7 +2384,7 @@ async def admin_dashboard():
             ]
         )
 
-        # ---- Engineers (already good) ----
+        # ---- Engineers ----
         total_eng = db.users.count_documents({
             "role": "engineer",
             "is_active": True
@@ -2144,47 +2396,82 @@ async def admin_dashboard():
             "is_available": True
         })
 
+        remote_eng = db.users.count_documents({
+            "role": "engineer",
+            "is_active": True,
+            "is_remote": True
+        })
+
         # ---- Companies ----
-        total_co = db.companies.count_documents({"status": "active"})
+        company_query = {"status": "active"}
+        if user.get("role") == "sub_admin":
+            company_query["id"] = {"$in": assigned_company_ids}
+        total_co = db.companies.count_documents(company_query)
 
         # ---- Recent activity (LIMITED) ----
+        log_query = {}
+        if user.get("role") == "sub_admin":
+            ticket_ids = [
+                t["id"] for t in db.tickets.find(ticket_scope, {"_id": 0, "id": 1})
+            ]
+            log_query["$or"] = [
+                {"ticket_id": {"$in": ticket_ids}},
+                {"target_user_id": user["id"]}
+            ]
         logs = list(
             db.ticket_status_logs
-            .find({}, {"_id": 0})
+            .find(log_query, {"_id": 0})
             .sort("timestamp", -1)
             .limit(5)
         )
 
-        recent = [{
-            "id": l["id"],
-            "actor_id": l.get("changed_by"),
-            "actor_name": l.get("changed_by_name"),
-            "actor_role": l.get("changed_by_role"),
-            "action": f"status_{l['new_status']}",
-            "details": l.get("remarks"),
-            "timestamp": l["timestamp"],
-        } for l in logs]
+        recent = []
+        for l in logs:
+            if l.get("actor_type") == "sub_admin_assignment":
+                recent.append({
+                    "id": l["id"],
+                    "actor_id": l.get("changed_by"),
+                    "actor_name": l.get("changed_by_name"),
+                    "actor_role": l.get("changed_by_role"),
+                    "action": "sub_admin_companies_updated",
+                    "details": f"Updated company assignments from {len(l.get('old_companies', []))} to {len(l.get('new_companies', []))}",
+                    "timestamp": l["timestamp"],
+                })
+            else:
+                recent.append({
+                    "id": l["id"],
+                    "actor_id": l.get("changed_by"),
+                    "actor_name": l.get("changed_by_name"),
+                    "actor_role": l.get("changed_by_role"),
+                    "action": f"status_{l['new_status']}",
+                    "details": l.get("remarks"),
+                    "timestamp": l["timestamp"],
+                })
 
         # ---- Warranty alerts (DB filter, not Python) ----
         today = date.today()
         in_30 = (today + timedelta(days=30)).isoformat()
 
-        warranty_alerts = list(db.devices.find(
-            {
-                "warranty_status": "active",
-                "warranty_expiry": {
-                    "$gte": today.isoformat(),
-                    "$lte": in_30
-                }
-            },
-            {"_id": 0}
-        ).limit(20))
+        warranty_query = {
+            "warranty_status": "active",
+            "warranty_expiry": {
+                "$gte": today.isoformat(),
+                "$lte": in_30
+            }
+        }
+        if user.get("role") == "sub_admin":
+            warranty_query["company_id"] = {"$in": assigned_company_ids}
+
+        warranty_alerts = list(
+            db.devices.find(warranty_query, {"_id": 0}).limit(20)
+        )
 
         return {
             "ticket_counts": counts,
             "engineers": {
                 "total": total_eng,
-                "available": available
+                "available": available,
+                "remote": remote_eng
             },
             "companies": {
                 "active": total_co
@@ -2196,48 +2483,6 @@ async def admin_dashboard():
     except Exception as e:
         print("DASHBOARD ERROR:", str(e))
         raise HTTPException(status_code=500, detail="Dashboard error")
-# @api.get("/dashboard/admin", dependencies=[Depends(require_admin)])
-# async def admin_dashboard():
-#     counts = {}
-#     for s in TICKET_STATUSES:
-#         counts[s] = db.tickets.count_documents({"status": s})
-#     counts["total"] = sum(counts.values())
-#     counts["active"] = sum(
-#         counts[s] for s in
-#         ["open", "assigned", "accepted", "travelling",
-#          "reached_site", "in_progress", "resolved",
-#          "completed_with_signature", "report_generated"]
-#     )
-#     total_eng = db.users.count_documents({"role": "engineer", "is_active": True})
-#     available = db.users.count_documents(
-#         {"role": "engineer", "is_active": True, "is_available": True}
-#     )
-#     total_co = db.companies.count_documents({"status": "active"})
-#     logs = list(db.ticket_status_logs.find({}, {"_id": 0})
-#                 .sort("timestamp", -1).limit(15))
-#     recent = [{
-#         "id": l["id"],
-#         "actor_id": l.get("changed_by"),
-#         "actor_name": l.get("changed_by_name"),
-#         "actor_role": l.get("changed_by_role"),
-#         "action": f"status_{l['new_status']}",
-#         "details": l.get("remarks"),
-#         "timestamp": l["timestamp"],
-#     } for l in logs]
-#     today = date.today()
-#     in_30 = (today + timedelta(days=30)).isoformat()
-#     warranty_alerts = list(db.devices.find(
-#         {"warranty_status": "active",
-#          "warranty_expiry": {"$gte": today.isoformat(), "$lte": in_30}},
-#         {"_id": 0}
-#     ).limit(20))
-#     return {
-#         "ticket_counts": counts,
-#         "engineers": {"total": total_eng, "available": available},
-#         "companies": {"active": total_co},
-#         "recent_activity": recent,
-#         "warranty_alerts": warranty_alerts,
-#     }
 
 
 @api.get("/dashboard/engineer")
@@ -2266,14 +2511,19 @@ async def engineer_dashboard(user=Depends(require_engineer)):
 
 
 # ---------- ANALYTICS ----------
-@api.get("/analytics", dependencies=[Depends(require_admin)])
-async def analytics():
+@api.get("/analytics", dependencies=[Depends(require_sub_admin)])
+async def analytics(user=Depends(get_current_user)):
     today = date.today()
+
+    # Scope by assigned companies for sub_admin
+    scope = {}
+    if user.get("role") == "sub_admin":
+        scope = _sub_admin_ticket_scope(user)
 
     # 1. Per-day: single aggregation instead of 14 count_documents
     start_14 = (today - timedelta(days=13)).isoformat()
     per_day_raw = list(db.tickets.aggregate([
-        {"$match": {"created_at": {"$gte": start_14}}},
+        {"$match": {"created_at": {"$gte": start_14}, **scope}},
         {"$group": {"_id": {"$substr": ["$created_at", 0, 10]}, "count": {"$sum": 1}}},
     ]))
     per_day_map = {r["_id"]: r["count"] for r in per_day_raw}
@@ -2285,7 +2535,7 @@ async def analytics():
 
     # 2. Engineer performance: single aggregation instead of 2 queries per engineer
     eng_perf_raw = list(db.tickets.aggregate([
-        {"$match": {"assigned_engineer_id": {"$ne": None}}},
+        {"$match": {"assigned_engineer_id": {"$ne": None}, **scope}},
         {"$group": {
             "_id": "$assigned_engineer_id",
             "completed": {"$sum": {"$cond": [{"$in": ["$status", ["closed", "report_generated"]]}, 1, 0]}},
@@ -2302,7 +2552,9 @@ async def analytics():
     ], key=lambda x: -x["completed"])
 
     # 3. Repeat complaints: $lookup instead of per-row find_one
-    repeats = list(db.tickets.aggregate([
+    repeat_pipeline = []
+    if scope: repeat_pipeline.append({"$match": scope})
+    repeat_pipeline += [
         {"$group": {"_id": "$device_id", "count": {"$sum": 1}}},
         {"$match": {"count": {"$gt": 1}}},
         {"$sort": {"count": -1}},
@@ -2311,10 +2563,13 @@ async def analytics():
         {"$unwind": {"path": "$device", "preserveNullAndEmptyArrays": True}},
         {"$project": {"_id": 0, "device_id": "$_id", "count": 1,
                       "brand": "$device.brand", "model": "$device.model"}},
-    ]))
+    ]
+    repeats = list(db.tickets.aggregate(repeat_pipeline))
 
     # 4. Brand trend: $lookup instead of per-row find_one
-    brand_trend = list(db.tickets.aggregate([
+    brand_pipeline = []
+    if scope: brand_pipeline.append({"$match": scope})
+    brand_pipeline += [
         {"$group": {"_id": "$device_id", "count": {"$sum": 1}}},
         {"$lookup": {"from": "devices", "localField": "_id", "foreignField": "device_id", "as": "device"}},
         {"$unwind": {"path": "$device", "preserveNullAndEmptyArrays": True}},
@@ -2322,7 +2577,8 @@ async def analytics():
         {"$sort": {"tickets": -1}},
         {"$limit": 8},
         {"$project": {"_id": 0, "brand": "$_id", "tickets": 1}},
-    ]))
+    ]
+    brand_trend = list(db.tickets.aggregate(brand_pipeline))
 
     # 5. Warranty alerts
     in_30 = (today + timedelta(days=30)).isoformat()
@@ -2332,20 +2588,130 @@ async def analytics():
         {"_id": 0}
     ).limit(20))
 
+    # 6. Customer analytics - tickets per customer per month (last 6 months)
+    start_6m = (today.replace(day=1) - timedelta(days=150)).isoformat()
+    customer_raw = list(db.tickets.aggregate([
+        {"$match": {"created_at": {"$gte": start_6m}, **scope}},
+        {"$group": {
+            "_id": {
+                "customer": "$customer_name",
+                "company": "$customer_company",
+                "month": {"$substr": ["$created_at", 0, 7]}
+            },
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"_id.month": -1, "count": -1}},
+    ]))
+
+    # Group by month
+    customer_by_month = {}
+    for r in customer_raw:
+        month = r["_id"]["month"]
+        if month not in customer_by_month:
+            customer_by_month[month] = []
+        customer_by_month[month].append({
+            "customer": r["_id"]["customer"] or "Unknown",
+            "company": r["_id"]["company"] or "",
+            "count": r["count"]
+        })
+
+    # Top customers overall this month
+    this_month = today.strftime("%Y-%m")
+    top_customers = sorted(
+        customer_by_month.get(this_month, []),
+        key=lambda x: -x["count"]
+    )[:10]
+
+    # 7. Resolution time analytics — avg hours to close a ticket
+    closed_tickets = list(db.tickets.find(
+        {"status": {"$in": ["closed", "report_generated"]},
+         "completed_at": {"$ne": None},
+         "created_at": {"$ne": None},
+         **scope},
+        {"_id": 0, "created_at": 1, "completed_at": 1, "assigned_engineer_id": 1}
+    ).limit(500))
+
+    def hours_diff(start, end):
+        try:
+            from datetime import datetime as dt
+            fmt = "%Y-%m-%dT%H:%M:%S"
+            s = dt.fromisoformat(start[:19])
+            e = dt.fromisoformat(end[:19])
+            diff = (e - s).total_seconds() / 3600
+            return round(diff, 1) if diff >= 0 else None
+        except:
+            return None
+
+    resolution_hours = [
+        h for t in closed_tickets
+        if (h := hours_diff(t.get("created_at",""), t.get("completed_at",""))) is not None
+    ]
+
+    avg_hours = round(sum(resolution_hours) / len(resolution_hours), 1) if resolution_hours else 0
+    min_hours = min(resolution_hours, default=0)
+    max_hours = max(resolution_hours, default=0)
+
+    # Bucket into ranges for chart
+    buckets = [
+        {"range": "< 4 hrs",   "min": 0,   "max": 4},
+        {"range": "4–8 hrs",   "min": 4,   "max": 8},
+        {"range": "8–24 hrs",  "min": 8,   "max": 24},
+        {"range": "1–3 days",  "min": 24,  "max": 72},
+        {"range": "3–7 days",  "min": 72,  "max": 168},
+        {"range": "> 7 days",  "min": 168, "max": 999999},
+    ]
+    for b in buckets:
+        b["count"] = sum(1 for h in resolution_hours if b["min"] <= h < b["max"])
+
+    # Per engineer avg resolution
+    eng_res_map = {}
+    for t in closed_tickets:
+        eid = t.get("assigned_engineer_id")
+        if not eid: continue
+        h = hours_diff(t.get("created_at",""), t.get("completed_at",""))
+        if h is None: continue
+        if eid not in eng_res_map: eng_res_map[eid] = []
+        eng_res_map[eid].append(h)
+
+    eng_resolution = []
+    for eid, hrs in eng_res_map.items():
+        eng = db.users.find_one({"id": eid}, {"_id": 0, "name": 1})
+        if eng:
+            eng_resolution.append({
+                "name": eng["name"],
+                "avg_hours": round(sum(hrs) / len(hrs), 1),
+                "tickets": len(hrs),
+            })
+    eng_resolution.sort(key=lambda x: x["avg_hours"])
+
     return {
         "per_day": per_day,
         "engineer_performance": perf,
         "repeat_complaints": repeats,
         "brand_trend": brand_trend,
         "warranty_alerts": warranty_alerts,
+        "customer_by_month": customer_by_month,
+        "top_customers_this_month": top_customers,
+        "resolution_time": {
+            "avg_hours": avg_hours,
+            "min_hours": min_hours,
+            "max_hours": max_hours,
+            "total_closed": len(resolution_hours),
+            "buckets": buckets,
+            "by_engineer": eng_resolution,
+        },
     }
 
 
-@api.get("/live-locations", dependencies=[Depends(require_admin)])
-async def live_locations():
+@api.get("/live-locations")
+async def live_locations(user=Depends(require_sub_admin)):
+    q = {
+        "engineer_location": {"$ne": None},
+        "status": {"$in": ["travelling", "reached_site", "in_progress"]},
+        **_sub_admin_ticket_scope(user),
+    }
     tickets = list(db.tickets.find(
-        {"engineer_location": {"$ne": None},
-         "status": {"$in": ["travelling", "reached_site", "in_progress"]}},
+        q,
         {"_id": 0}
     ).limit(200))
     out = []

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Pencil, Power, Trash2, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Wifi } from "lucide-react";
 import { api, formatError } from "../../lib/api";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -17,6 +17,7 @@ export default function EngineersPage() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({
     name: "", email: "", phone: "", password: "", skills: "",
+    is_remote: false, oem_number: "",
   });
 
   const load = async () => {
@@ -27,7 +28,7 @@ export default function EngineersPage() {
 
   const openNew = () => {
     setEditing(null);
-    setForm({ name: "", email: "", phone: "", password: "", skills: "" });
+    setForm({ name: "", email: "", phone: "", password: "", skills: "", is_remote: false, oem_number: "" });
     setOpen(true);
   };
 
@@ -36,6 +37,8 @@ export default function EngineersPage() {
     setForm({
       name: e.name || "", email: e.email, phone: e.phone || "",
       password: "", skills: (e.skills || []).join(", "),
+      is_remote: e.is_remote || false,
+      oem_number: e.oem_number || "",
     });
     setOpen(true);
   };
@@ -43,18 +46,17 @@ export default function EngineersPage() {
   const save = async () => {
     try {
       const skillsArr = form.skills.split(",").map((s) => s.trim()).filter(Boolean);
+      const base = {
+        name: form.name, phone: form.phone, skills: skillsArr,
+        is_remote: form.is_remote,
+        oem_number: form.oem_number || null,
+      };
       if (editing) {
-        const payload = {
-          name: form.name, phone: form.phone, skills: skillsArr,
-        };
-        if (form.password) payload.password = form.password;
-        await api.patch(`/engineers/${editing.id}`, payload);
+        if (form.password) base.password = form.password;
+        await api.patch(`/engineers/${editing.id}`, base);
         toast.success("Engineer updated");
       } else {
-        await api.post("/engineers", {
-          name: form.name, email: form.email, phone: form.phone,
-          password: form.password, skills: skillsArr,
-        });
+        await api.post("/engineers", { ...base, email: form.email, password: form.password });
         toast.success("Engineer created");
       }
       setOpen(false);
@@ -105,9 +107,17 @@ export default function EngineersPage() {
                 <div className="flex items-center gap-2">
                   <div className="font-semibold text-navy truncate">{e.name}</div>
                   {e.is_available && e.is_active && <span className="pulse-dot" />}
+                  {e.is_remote && (
+                    <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">
+                      <Wifi className="w-2.5 h-2.5" /> Remote
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-slate-500 truncate">{e.email}</div>
                 <div className="text-xs text-slate-500">{e.phone || "—"}</div>
+                {e.oem_number && (
+                  <div className="text-xs text-slate-400 mt-0.5">OEM: <span className="font-mono text-slate-600">{e.oem_number}</span></div>
+                )}
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-1">
@@ -128,6 +138,14 @@ export default function EngineersPage() {
               <div className="flex items-center justify-between p-2 rounded bg-slate-50">
                 <span className="text-slate-600">Available</span>
                 <Switch checked={!!e.is_available} onCheckedChange={() => toggleAvailable(e)} />
+              </div>
+            </div>
+            <div className="mt-2 grid grid-cols-1 gap-2 text-xs">
+              <div className="flex items-center justify-between p-2 rounded bg-slate-50">
+                <span className="text-slate-600">Remote</span>
+                <Switch checked={!!e.is_remote} onCheckedChange={() =>
+                  api.patch(`/engineers/${e.id}`, { is_remote: !e.is_remote }).then(load)
+                } />
               </div>
             </div>
             <div className="mt-3 flex items-center justify-between text-xs">
@@ -178,6 +196,18 @@ export default function EngineersPage() {
               <Label className="text-xs font-bold">Skills (comma separated)</Label>
               <Input value={form.skills} onChange={(e) => setForm({...form, skills: e.target.value})}
                      placeholder="Laptop Repair, Networking, Printer" />
+            </div>
+            <div>
+              <Label className="text-xs font-bold">OEM Number <span className="text-slate-400 font-normal">(optional)</span></Label>
+              <Input value={form.oem_number} onChange={(e) => setForm({...form, oem_number: e.target.value})}
+                     placeholder="e.g. OEM-12345" />
+            </div>
+            <div className="flex items-center justify-between p-3 rounded-md bg-slate-50 border border-slate-200">
+              <div>
+                <div className="text-xs font-bold text-navy">Remote Engineer</div>
+                <div className="text-xs text-slate-500">Enable when engineer is not travelling to site</div>
+              </div>
+              <Switch checked={form.is_remote} onCheckedChange={(v) => setForm({...form, is_remote: v})} />
             </div>
           </div>
           <DialogFooter>

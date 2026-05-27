@@ -1,6 +1,3 @@
-// webpack-health-plugin.js
-// Webpack plugin that tracks compilation state and health metrics
-
 class WebpackHealthPlugin {
   constructor() {
     this.status = {

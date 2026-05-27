@@ -1,20 +1,3 @@
-"""
-Plutus Ventures ServiceOps - Iteration 2 backend regression suite.
-
-Covers new features:
-- Company Management (CRUD with auto company_code, duplicate name rejection,
-  delete-block when active tickets, propagation of name change, search/filter).
-- Ticket creation with company_id (auto-fill customer fields, inactive
-  company rejection, engineer/admin role enforcement).
-- Status workflow: assigned -> accepted -> travelling -> reached_site ->
-  in_progress, plus report submission -> completed_with_signature ->
-  report_generated -> closed (via approve).
-- Engineer report with engineer_notes / before_images / after_images /
-  customer_signature; signature required; non-assigned engineer 403.
-- Reports endpoint + file serving with ?auth= query token; PDF >5KB and
-  starts with %PDF.
-- Admin dashboard exposes companies.active and new status counters.
-"""
 import os
 import time
 import pytest
@@ -23,15 +6,11 @@ import requests
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 API = f"{BASE_URL}/api"
 
-# NOTE: backend/.env overrides ADMIN_EMAIL to admin@serviceops.com, so the
-# "primary" plutus admin per docs is NOT seeded; we use the working legacy
-# admin which is also accepted per credentials file.
 ADMIN_EMAIL = "admin@serviceops.com"
 ADMIN_PASSWORD = "admin123"
 ENG_EMAIL = "engineer@plutusventures.com"
 ENG_PASSWORD = "engineer123"
 
-# Tiny PNG (1x1) used for images / signature
 _PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgAAIAAAUAAeImBZsAAAAASUVORK5CYII="
 )
@@ -49,27 +28,22 @@ def _login(email: str, password: str) -> str:
     assert v.status_code == 200, v.text
     return v.json()["token"]
 
-
 def _h(token):
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
 
 @pytest.fixture(scope="session")
 def admin_token():
     return _login(ADMIN_EMAIL, ADMIN_PASSWORD)
 
-
 @pytest.fixture(scope="session")
 def engineer_token():
     return _login(ENG_EMAIL, ENG_PASSWORD)
-
 
 @pytest.fixture(scope="session")
 def engineer_user(engineer_token):
     r = requests.get(f"{API}/auth/me", headers=_h(engineer_token), timeout=30)
     assert r.status_code == 200
     return r.json()
-
 
 # ---------- AUTH ----------
 class TestAuth:
@@ -87,7 +61,6 @@ class TestAuth:
     def test_legacy_admin_login_works(self):
         token = _login("admin@plutusventures.com", "admin123")
         assert isinstance(token, str) and len(token) > 0
-
 
 # ---------- COMPANIES CRUD ----------
 class TestCompanies:
@@ -156,7 +129,6 @@ class TestCompanies:
         assert r.status_code == 200, r.text
         assert r.json()["company_name"] == new_name
         TestCompanies.state["company"]["company_name"] = new_name
-
 
 # ---------- TICKETS with company_id ----------
 class TestTickets:
@@ -308,7 +280,6 @@ class TestTickets:
         assert r.status_code == 200
         assert r.json()["status"] == "closed"
 
-
 # ---------- Companies delete-blocking & cleanup ----------
 class TestCompanyDelete:
     def test_delete_company_blocked_with_active_ticket(self, admin_token):
@@ -330,7 +301,6 @@ class TestCompanyDelete:
                           json={"company_name": cn}, timeout=30).json()
         d = requests.delete(f"{API}/companies/{c['id']}", headers=_h(admin_token), timeout=30)
         assert d.status_code == 200
-
 
 # ---------- Dashboard ----------
 class TestDashboard:

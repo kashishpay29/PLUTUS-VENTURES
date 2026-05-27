@@ -7,6 +7,7 @@ import {
   Clock
 } from "lucide-react";
 import { api, formatError, API } from "../../lib/api";
+import { useAuth } from "../../lib/auth";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -20,26 +21,38 @@ import {
 } from "../../components/ui/select";
 import { StatusBadge, formatDate } from "../../lib/status";
 
-const NEXT_STATUS = {
-  assigned: { next: "accepted", label: "Accept ticket", icon: CheckCircle2, color: "bg-emerald-600" },
-  accepted: { next: "travelling", label: "Start travelling", icon: Truck, color: "bg-cyan-600" },
-  travelling: { next: "reached_site", label: "Reached site", icon: MapPin, color: "bg-emerald-600" },
-  reached_site: { next: "in_progress", label: "Start work", icon: Wrench, color: "bg-orange-600" },
-  in_progress: { next: null, label: "Submit report", icon: FileSignature, color: "bg-navy" },
+const NEXT_STATUS_ONSITE = {
+  assigned:     { next: "accepted",     label: "Accept ticket",    icon: CheckCircle2,  color: "bg-emerald-600" },
+  accepted:     { next: "travelling",   label: "Start travelling", icon: Truck,         color: "bg-cyan-600" },
+  travelling:   { next: "reached_site", label: "Reached site",     icon: MapPin,        color: "bg-emerald-600" },
+  reached_site: { next: "in_progress",  label: "Start work",       icon: Wrench,        color: "bg-orange-600" },
+  in_progress:  { next: null,           label: "Submit report",    icon: FileSignature, color: "bg-navy" },
+};
+
+const NEXT_STATUS_REMOTE = {
+  assigned:    { next: "accepted",    label: "Accept ticket", icon: CheckCircle2,  color: "bg-emerald-600" },
+  accepted:    { next: "in_progress", label: "Start work",    icon: Wrench,        color: "bg-orange-600" },
+  in_progress: { next: null,          label: "Submit report", icon: FileSignature, color: "bg-navy" },
 };
 
 export default function EngineerTicketDetail() {
   const { id } = useParams();
   const nav = useNavigate();
+  const { user } = useAuth();
   const [ticket, setTicket] = useState(null);
+  const [isRemote, setIsRemote] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [reportOpen, setReportOpen] = useState(false);
 
   const load = async () => {
     try {
-      const { data } = await api.get(`/tickets/${id}`);
+      const [{ data }, { data: me }] = await Promise.all([
+        api.get(`/tickets/${id}`),
+        api.get("/auth/me"),
+      ]);
       setTicket(data);
+      setIsRemote(me.is_remote || false);
     } catch (err) {
       toast.error(formatError(err.response?.data?.detail));
     }
@@ -94,6 +107,7 @@ export default function EngineerTicketDetail() {
 
   if (!ticket) return <div className="p-4 text-slate-500">Loading…</div>;
 
+  const NEXT_STATUS = isRemote ? NEXT_STATUS_REMOTE : NEXT_STATUS_ONSITE;
   const action = NEXT_STATUS[ticket.status];
   const d = ticket.device;
 
@@ -340,6 +354,7 @@ function SignaturePad({ sigRef }) {
 
 function ReportDrawer({ ticket, onClose, onSubmitted }) {
   const [workNotes, setWorkNotes] = useState("");
+  const [oemNumber, setOemNumber] = useState("");
   const [parts, setParts] = useState([]);
   const [photosBefore, setPhotosBefore] = useState([]);
   const [photosAfter, setPhotosAfter] = useState([]);
@@ -386,6 +401,10 @@ function ReportDrawer({ ticket, onClose, onSubmitted }) {
     const sig = sigRef.current.getTrimmedCanvas().toDataURL("image/png");
     setSubmitting(true);
     try {
+      // Save OEM number to engineer profile if provided
+      if (oemNumber.trim()) {
+        try { await api.patch(`/engineers/${ticket.assigned_engineer_id}`, { oem_number: oemNumber.trim() }); } catch {}
+      }
       await api.post(`/tickets/${ticket.id}/report`, {
         engineer_notes: workNotes,
         resolution_summary: workNotes,
@@ -394,6 +413,7 @@ function ReportDrawer({ ticket, onClose, onSubmitted }) {
         after_images: photosAfter,
         customer_signature: sig,
         customer_signed_name: signedName,
+        oem_number: oemNumber.trim() || null,
       });
       toast.success("Report submitted & PDF generated");
       onSubmitted();
@@ -411,6 +431,12 @@ function ReportDrawer({ ticket, onClose, onSubmitted }) {
           <DrawerTitle>Service report — {ticket.ticket_number}</DrawerTitle>
         </DrawerHeader>
         <div className="px-4 pb-4 overflow-auto space-y-4 flex-1">
+          <div>
+            <Label className="text-xs font-bold">OEM Number <span className="text-slate-400 font-normal">(optional)</span></Label>
+            <Input value={oemNumber} onChange={(e) => setOemNumber(e.target.value)}
+                   placeholder="e.g. OEM-12345"
+                   data-testid="oem-number-input" />
+          </div>
           <div>
             <Label className="text-xs font-bold">Work notes</Label>
             <Textarea value={workNotes} onChange={(e) => setWorkNotes(e.target.value)} rows={4}

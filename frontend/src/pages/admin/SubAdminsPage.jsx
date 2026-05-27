@@ -8,12 +8,10 @@ import { Label } from "../../components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../components/ui/dialog";
 import { toast } from "sonner";
 
-const EMPTY = { name: "", email: "", password: "", phone: "", assigned_company_ids: [], assigned_engineer_ids: [] };
+const EMPTY = { name: "", email: "", password: "", phone: "" };
 
 export default function SubAdminsPage() {
   const [list, setList] = useState([]);
-  const [companies, setCompanies] = useState([]);
-  const [engineers, setEngineers] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
@@ -21,14 +19,8 @@ export default function SubAdminsPage() {
 
   const load = useCallback(async () => {
     try {
-      const [sa, co, en] = await Promise.all([
-        api.get("/sub-admins"),
-        api.get("/companies"),
-        api.get("/engineers"),
-      ]);
-      setList(sa.data);
-      setCompanies(Array.isArray(co.data) ? co.data : co.data.companies || []);
-      setEngineers(en.data);
+      const sa = await api.get("/sub-admins");
+      setList(Array.isArray(sa.data) ? sa.data : sa.data.items || []);
     } catch (err) { console.error(err); }
   }, []);
 
@@ -37,17 +29,8 @@ export default function SubAdminsPage() {
   const openCreate = () => { setEditing(null); setForm(EMPTY); setOpen(true); };
   const openEdit = (s) => {
     setEditing(s);
-    setForm({ name: s.name, email: s.email, password: "", phone: s.phone || "",
-               assigned_company_ids: s.assigned_company_ids || [],
-               assigned_engineer_ids: s.assigned_engineer_ids || [] });
+    setForm({ name: s.name, email: s.email, password: "", phone: s.phone || "" });
     setOpen(true);
-  };
-
-  const toggleId = (field, id) => {
-    setForm((f) => ({
-      ...f,
-      [field]: f[field].includes(id) ? f[field].filter((x) => x !== id) : [...f[field], id],
-    }));
   };
 
   const save = async () => {
@@ -156,34 +139,6 @@ export default function SubAdminsPage() {
               <Label className="text-xs font-bold">{editing ? "New Password (leave blank to keep)" : "Password *"}</Label>
               <Input type="password" value={form.password}
                      onChange={(e) => setForm({...form, password: e.target.value})} className="mt-1" />
-            </div>
-
-            <div>
-              <Label className="text-xs font-bold mb-2 block">Assign Companies</Label>
-              <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1">
-                {companies.map((c) => (
-                  <label key={c.id} className="flex items-center gap-2 cursor-pointer p-1 hover:bg-slate-50 rounded">
-                    <input type="checkbox" checked={form.assigned_company_ids.includes(c.id)}
-                           onChange={() => toggleId("assigned_company_ids", c.id)} />
-                    <span className="text-sm">{c.name}</span>
-                  </label>
-                ))}
-                {companies.length === 0 && <div className="text-xs text-slate-500 p-2">No companies found</div>}
-              </div>
-            </div>
-
-            <div>
-              <Label className="text-xs font-bold mb-2 block">Assign Engineers</Label>
-              <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1">
-                {engineers.map((e) => (
-                  <label key={e.id} className="flex items-center gap-2 cursor-pointer p-1 hover:bg-slate-50 rounded">
-                    <input type="checkbox" checked={form.assigned_engineer_ids.includes(e.id)}
-                           onChange={() => toggleId("assigned_engineer_ids", e.id)} />
-                    <span className="text-sm">{e.name} <span className="text-slate-400 text-xs">{e.email}</span></span>
-                  </label>
-                ))}
-                {engineers.length === 0 && <div className="text-xs text-slate-500 p-2">No engineers found</div>}
-              </div>
             </div>
 
             <div className="flex gap-2 justify-end pt-2">

@@ -4,9 +4,10 @@ import { toast } from "sonner";
 import {
   ArrowLeft, User as UserIcon, Phone, Building2, Cpu, ShieldCheck,
   FileText, MapPin, Image as ImageIcon, Wrench, CheckCircle2,
-  Clock, Activity, Download, BadgeCheck
-} from "lucide-react";
+  Clock, Activity, Download, BadgeCheck, Wifi, UserCheck, Pencil,
+  ExternalLink, DollarSign } from "lucide-react";
 import { api, formatError, API } from "../../lib/api";
+import { Input } from "../../components/ui/input";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import {
@@ -24,7 +25,13 @@ export default function TicketDetail() {
   const [ticket, setTicket] = useState(null);
   const [engineers, setEngineers] = useState([]);
   const [assignOpen, setAssignOpen] = useState(false);
+  const [isReassign, setIsReassign] = useState(false);
   const [selectedEng, setSelectedEng] = useState("");
+  const [isOutsource, setIsOutsource] = useState(false);
+  const [outsourceForm, setOutsourceForm] = useState({ name: "", company: "", phone: "", price: "", notes: "" });
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportForm, setReportForm] = useState({ work_done: "", resolution_summary: "" });
+  const [completing, setCompleting] = useState(false);
   const [approving, setApproving] = useState(false);
 
  const load = useCallback(async () => {
@@ -45,23 +52,62 @@ export default function TicketDetail() {
 
   const loadEngineers = async () => {
     const { data } = await api.get("/engineers?available_only=true");
-    setEngineers(data);
+    setEngineers(Array.isArray(data) ? data : data.items || []);
   };
 
-  const openAssign = async () => {
+  const openAssign = async (reassign = false) => {
     await loadEngineers();
+    setIsReassign(reassign);
+    setSelectedEng(reassign ? ticket.assigned_engineer_id : "");
     setAssignOpen(true);
   };
 
   const assign = async () => {
-    if (!selectedEng) return;
     try {
-      await api.post(`/tickets/${id}/assign`, { engineer_id: selectedEng });
-      toast.success("Engineer assigned");
+      if (isOutsource) {
+        if (!outsourceForm.name) { toast.error("Outsource engineer name required"); return; }
+        await api.post(`/tickets/${id}/assign`, {
+          is_outsource: true,
+          outsource_name: outsourceForm.name,
+          outsource_company: outsourceForm.company,
+          outsource_phone: outsourceForm.phone,
+          outsource_price: outsourceForm.price ? parseFloat(outsourceForm.price) : null,
+          outsource_notes: outsourceForm.notes,
+        });
+        toast.success("Outsourced successfully");
+      } else {
+        if (!selectedEng) { toast.error("Please select an engineer"); return; }
+        await api.post(`/tickets/${id}/assign`, { engineer_id: selectedEng, is_outsource: false });
+        toast.success(isReassign ? "Engineer reassigned" : "Engineer assigned");
+      }
       setAssignOpen(false);
       load();
     } catch (err) {
       toast.error(formatError(err.response?.data?.detail));
+    }
+  };
+
+  const outsourceComplete = async () => {
+    if (!window.confirm("Mark this outsource ticket as completed?")) return;
+    setCompleting(true);
+    try {
+      await api.post(`/tickets/${id}/outsource-complete`);
+      toast.success("Ticket marked as completed");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed");
+    } finally { setCompleting(false); }
+  };
+
+  const submitServiceReport = async () => {
+    if (!reportForm.work_done) { toast.error("Work done description is required"); return; }
+    try {
+      await api.post(`/tickets/${id}/service-report`, reportForm);
+      toast.success("Service report PDF generated");
+      setReportOpen(false);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed");
     }
   };
 
@@ -74,6 +120,11 @@ export default function TicketDetail() {
     } catch (err) {
       toast.error(formatError(err.response?.data?.detail));
     } finally { setApproving(false); }
+  };
+
+  const downloadOutsourcePdf = () => {
+    const token = localStorage.getItem("token");
+    window.open(`${API}/tickets/${id}/outsource-pdf?auth=${token}`, "_blank");
   };
 
   const downloadPdf = () => {
@@ -112,7 +163,7 @@ export default function TicketDetail() {
         </div>
         <div className="flex flex-wrap gap-2">
           {!ticket.engineer && (
-            <Button onClick={openAssign} className="bg-navy hover:bg-navy/90 text-white rounded-md"
+            <Button onClick={() => { setIsOutsource(false); openAssign(false); }} className="bg-navy hover:bg-navy/90 text-white rounded-md"
                     data-testid="assign-engineer-btn">
               Assign engineer
             </Button>
@@ -251,7 +302,14 @@ export default function TicketDetail() {
                   {ticket.engineer.name?.[0]?.toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-navy">{ticket.engineer.name}</div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="font-semibold text-navy">{ticket.engineer.name}</div>
+                    {ticket.engineer.is_remote && (
+                      <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                        <Wifi className="w-2.5 h-2.5" /> Remote
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-slate-500 truncate">{ticket.engineer.email}</div>
                   {ticket.engineer.skills?.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1">
@@ -265,9 +323,55 @@ export default function TicketDetail() {
                 </div>
               </div>
             ) : (
-              <Button onClick={openAssign} className="w-full bg-navy hover:bg-navy/90 text-white">
+              <Button onClick={() => { setIsOutsource(false); openAssign(false); }}
+                className="w-full bg-navy hover:bg-navy/90 text-white">
                 Assign engineer
               </Button>
+            )}
+
+            {/* Outsource details */}
+            {ticket.is_outsource && ticket.outsource && (
+              <div className="mt-3 p-3 rounded-md bg-orange-50 border border-orange-200 space-y-1 text-xs">
+                <div className="font-bold text-orange-700 flex items-center gap-1 mb-2">
+                  <ExternalLink className="w-3 h-3" /> Outsource Engineer
+                </div>
+                <div><span className="font-semibold">Name:</span> {ticket.outsource.name}</div>
+                {ticket.outsource.company && <div><span className="font-semibold">Location:</span> {ticket.outsource.company}</div>}
+                {ticket.outsource.phone && <div><span className="font-semibold">Phone:</span> {ticket.outsource.phone}</div>}
+                {ticket.outsource.price != null && (
+                  <div className="font-bold text-orange-800 text-sm mt-1 flex items-center gap-1">
+                    <DollarSign className="w-3 h-3" /> Service Charge: ₹{Number(ticket.outsource.price).toLocaleString()}
+                  </div>
+                )}
+                {ticket.outsource.notes && <div className="text-slate-500 italic mt-1">{ticket.outsource.notes}</div>}
+                <button onClick={downloadOutsourcePdf}
+                  className="mt-3 w-full flex items-center justify-center gap-1.5 text-xs font-bold text-orange-700 bg-orange-100 hover:bg-orange-200 rounded-md py-2 transition-colors">
+                  <Download className="w-3.5 h-3.5" /> Download internal PDF (accounts)
+                </button>
+              </div>
+            )}
+
+            {/* Outsource complete button */}
+            {ticket.is_outsource && !["closed","report_generated"].includes(ticket.status) && (
+              <button onClick={outsourceComplete} disabled={completing}
+                className="mt-3 w-full flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-orange-500 hover:bg-orange-600 rounded-md py-2 transition-colors disabled:opacity-50">
+                {completing ? "Completing…" : "✓ Mark outsource as completed"}
+              </button>
+            )}
+
+            {/* Generate service report button */}
+            {(ticket.is_outsource || ["closed","report_generated"].includes(ticket.status)) && (
+              <button onClick={() => setReportOpen(true)}
+                className="mt-2 w-full flex items-center justify-center gap-1.5 text-xs font-bold text-navy border-2 border-navy hover:bg-navy hover:text-white rounded-md py-2 transition-colors">
+                <FileText className="w-3.5 h-3.5" /> Generate service report
+              </button>
+            )}
+
+            {(ticket.engineer || ticket.is_outsource) && (
+              <button onClick={() => { setIsOutsource(false); openAssign(true); }}
+                className="mt-2 w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-navy hover:bg-slate-50 rounded-md py-2 border border-slate-200 transition-colors">
+                <Pencil className="w-3 h-3" /> Reassign engineer
+              </button>
             )}
           </Card>
 
@@ -294,24 +398,133 @@ export default function TicketDetail() {
       </div>
 
       {/* Assign Dialog */}
-      <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
-        <DialogContent>
+      {/* Assign / Outsource Dialog */}
+      <Dialog open={assignOpen} onOpenChange={(v) => { setAssignOpen(v); if (!v) setIsOutsource(false); }}>
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Assign engineer</DialogTitle>
+            <DialogTitle>{isReassign ? "Reassign engineer" : "Assign engineer"}</DialogTitle>
           </DialogHeader>
-          <Select value={selectedEng} onValueChange={setSelectedEng}>
-            <SelectTrigger data-testid="assign-engineer-select"><SelectValue placeholder="Choose available engineer…" /></SelectTrigger>
-            <SelectContent>
-              {engineers.map((e) => (
-                <SelectItem key={e.id} value={e.id}>
-                  {e.name} — {e.active_tickets} active • {e.skills?.join(", ") || "no skills"}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+
+          {/* Toggle */}
+          <div className="flex rounded-md overflow-hidden border border-slate-200">
+            <button onClick={() => setIsOutsource(false)}
+              className={`flex-1 py-2 text-xs font-bold transition-colors ${!isOutsource ? "bg-navy text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
+              Internal Engineer
+            </button>
+            <button onClick={() => setIsOutsource(true)}
+              className={`flex-1 py-2 text-xs font-bold flex items-center justify-center gap-1 transition-colors ${isOutsource ? "bg-orange-500 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
+              <ExternalLink className="w-3 h-3" /> Outsource
+            </button>
+          </div>
+
+          {!isOutsource ? (
+            <Select value={selectedEng} onValueChange={setSelectedEng}>
+              <SelectTrigger data-testid="assign-engineer-select">
+                <SelectValue placeholder="Choose available engineer…" />
+              </SelectTrigger>
+              <SelectContent>
+                {engineers.map((e) => (
+                  <SelectItem key={e.id} value={e.id}>
+                    {e.name} — {e.active_tickets} active • {e.skills?.join(", ") || "no skills"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <div className="space-y-3">
+              <div className="p-2 rounded bg-orange-50 border border-orange-100 text-xs text-orange-700">
+                Details will be saved with the ticket and shown in the internal PDF report.
+              </div>
+              <div>
+                <label className="text-xs font-bold">Engineer Name *</label>
+                <Input className="mt-1" value={outsourceForm.name}
+                  onChange={e => setOutsourceForm({...outsourceForm, name: e.target.value})}
+                  placeholder="Full name" />
+              </div>
+              <div>
+                <label className="text-xs font-bold">Location</label>
+                <Input className="mt-1" value={outsourceForm.company}
+                  onChange={e => setOutsourceForm({...outsourceForm, company: e.target.value})}
+                  placeholder="e.g. Andheri, Mumbai" />
+              </div>
+              <div>
+                <label className="text-xs font-bold">Phone</label>
+                <Input className="mt-1" value={outsourceForm.phone}
+                  onChange={e => setOutsourceForm({...outsourceForm, phone: e.target.value})}
+                  placeholder="Contact number" />
+              </div>
+              <div>
+                <label className="text-xs font-bold">Service Price (₹)</label>
+                <Input className="mt-1" type="number" value={outsourceForm.price}
+                  onChange={e => setOutsourceForm({...outsourceForm, price: e.target.value})}
+                  placeholder="0.00" />
+              </div>
+              <div>
+                <label className="text-xs font-bold">Notes</label>
+                <Input className="mt-1" value={outsourceForm.notes}
+                  onChange={e => setOutsourceForm({...outsourceForm, notes: e.target.value})}
+                  placeholder="Any additional notes" />
+              </div>
+            </div>
+          )}
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setAssignOpen(false)}>Cancel</Button>
-            <Button onClick={assign} className="bg-navy hover:bg-navy/90" data-testid="confirm-assign-btn">Assign</Button>
+            <Button onClick={assign}
+              className={isOutsource ? "bg-orange-500 hover:bg-orange-600" : "bg-navy hover:bg-navy/90"}
+              data-testid="confirm-assign-btn">
+              {isOutsource ? "Outsource" : isReassign ? "Reassign" : "Assign"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Service Report Dialog */}
+      <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle>Generate Service Report</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {/* Pre-filled info */}
+            <div className="p-3 rounded-md bg-slate-50 border text-sm space-y-1">
+              <div><span className="font-bold">Customer:</span> {ticket?.customer_name}</div>
+              <div><span className="font-bold">Company:</span> {ticket?.company?.company_name || ticket?.customer_company || "—"}</div>
+              <div><span className="font-bold">Device:</span> {ticket?.device?.brand} {ticket?.device?.model}</div>
+              <div><span className="font-bold">Problem:</span> {ticket?.problem_description}</div>
+              {ticket?.is_outsource && ticket?.outsource && (
+                <div className="mt-2 pt-2 border-t">
+                  <div className="text-xs font-bold text-orange-600 mb-1">OUTSOURCE ENGINEER</div>
+                  <div><span className="font-bold">Name:</span> {ticket.outsource.name}</div>
+                  {ticket.outsource.company && <div><span className="font-bold">Location:</span> {ticket.outsource.company}</div>}
+                  {ticket.outsource.price != null && <div className="font-bold text-orange-700">Charge: ₹{Number(ticket.outsource.price).toLocaleString()}</div>}
+                </div>
+              )}
+              {!ticket?.is_outsource && ticket?.engineer && (
+                <div><span className="font-bold">Engineer:</span> {ticket.engineer.name}</div>
+              )}
+            </div>
+            <div>
+              <label className="text-xs font-bold">Work done *</label>
+              <textarea
+                value={reportForm.work_done}
+                onChange={e => setReportForm({...reportForm, work_done: e.target.value})}
+                placeholder="Describe the work performed…"
+                className="w-full mt-1 p-2 border rounded-md text-sm min-h-[80px] resize-none focus:outline-none focus:ring-2 focus:ring-navy/30"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-bold">Resolution summary <span className="text-slate-400 font-normal">(optional)</span></label>
+              <Input className="mt-1" value={reportForm.resolution_summary}
+                onChange={e => setReportForm({...reportForm, resolution_summary: e.target.value})}
+                placeholder="Brief summary for the client" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReportOpen(false)}>Cancel</Button>
+            <Button onClick={submitServiceReport} className="bg-navy hover:bg-navy/90">
+              <FileText className="w-4 h-4 mr-2" /> Generate PDF
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

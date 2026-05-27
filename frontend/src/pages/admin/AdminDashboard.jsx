@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Ticket as TicketIcon, Users, Activity, AlertTriangle,
-  PlusCircle, ArrowUpRight, Clock
+  PlusCircle, ArrowUpRight, Clock, Wifi, WifiOff, MapPin
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { api } from "../../lib/api";
@@ -18,6 +18,7 @@ const STAT_CARDS = [
 ];
 
 export default function AdminDashboard() {
+  const [engineers, setEngineers] = useState([]);
   const [data, setData] = useState(() => {
     try {
       const cached = localStorage.getItem("dashboard");
@@ -31,8 +32,12 @@ export default function AdminDashboard() {
   useEffect(() => {
     const load = async () => {
       try {
-        const { data: fresh } = await api.get("/dashboard/admin");
+        const [{ data: fresh }, { data: engData }] = await Promise.all([
+          api.get("/dashboard/admin"),
+          api.get("/engineers"),
+        ]);
         setData(fresh);
+        setEngineers(Array.isArray(engData) ? engData : engData.items || []);
         localStorage.setItem("dashboard", JSON.stringify(fresh));
       } catch (err) {
         console.error("Dashboard fetch error:", err);
@@ -70,9 +75,9 @@ export default function AdminDashboard() {
           <h1 className="font-display font-black text-3xl sm:text-4xl tracking-tight text-navy mt-1">
             Live operations
           </h1>
-          <p className="text-slate-500 mt-1 flex items-center gap-2 text-sm">
+          {/* <p className="text-slate-500 mt-1 flex items-center gap-2 text-sm">
             <span className="pulse-dot" /> Realtime — auto-refresh every 12s
-          </p>
+          </p> */}
         </div>
         <Link to="/admin/tickets/new">
           <Button className="bg-navy hover:bg-navy/90 text-white font-semibold rounded-md h-11"
@@ -121,9 +126,53 @@ export default function AdminDashboard() {
               <Users className="w-5 h-5 text-navy" />
             </div>
           </div>
-          <Link to="/admin/engineers" className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-signal hover:underline">
+          <div className="mt-4 flex items-center gap-2 p-2 rounded-md bg-blue-50 border border-blue-100">
+            <Wifi className="w-3.5 h-3.5 text-blue-500" />
+            <span className="text-xs text-blue-700 font-semibold">
+              {data.engineers.remote || 0} remote
+            </span>
+            <span className="text-xs text-slate-400">· working off-site</span>
+          </div>
+          <Link to="/admin/engineers" className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-signal hover:underline">
             Manage engineers <ArrowUpRight className="w-3 h-3" />
           </Link>
+        </Card>
+
+        {/* Engineer work mode */}
+        <Card className="p-6 rounded-md lg:col-span-2">
+          <div className="flex items-center justify-between mb-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500 font-bold">Engineer work mode</div>
+            <Link to="/admin/engineers" className="text-xs font-semibold text-signal hover:underline">
+              Manage <ArrowUpRight className="w-3 h-3 inline" />
+            </Link>
+          </div>
+          {engineers.length === 0 ? (
+            <div className="text-sm text-slate-400 text-center py-4">No engineers added yet</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {engineers.filter(e => e.is_active).map((e) => (
+                <div key={e.id} className={`flex items-center gap-3 p-3 rounded-md border ${
+                  e.is_remote ? "bg-blue-50 border-blue-100" : "bg-slate-50 border-slate-100"
+                }`}>
+                  <div className="w-8 h-8 rounded-full bg-navy text-white grid place-items-center font-bold text-sm flex-shrink-0">
+                    {e.name?.[0]?.toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-navy text-sm truncate">{e.name}</div>
+                    <div className="text-xs text-slate-500 truncate">{e.phone || e.email}</div>
+                  </div>
+                  <div className={`flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-1 rounded-full flex-shrink-0 ${
+                    e.is_remote ? "bg-blue-100 text-blue-700" : "bg-emerald-100 text-emerald-700"
+                  }`}>
+                    {e.is_remote
+                      ? <><Wifi className="w-2.5 h-2.5" /> Remote</>
+                      : <><MapPin className="w-2.5 h-2.5" /> On-site</>
+                    }
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
 
         {/* All status breakdown */}

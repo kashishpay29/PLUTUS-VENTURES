@@ -10,7 +10,7 @@ import { Textarea } from "../../components/ui/textarea";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "../../components/ui/select";
-import { ArrowLeft, Save, Loader2, Building2, PlusCircle, AlertCircle, Paperclip, X, ImageIcon } from "lucide-react";
+import { ArrowLeft, Save, Loader2, Building2, PlusCircle, AlertCircle, Paperclip, X, ImageIcon, Search, ChevronDown, Check } from "lucide-react";
 
 export default function TicketCreate() {
   const nav = useNavigate();
@@ -20,6 +20,18 @@ export default function TicketCreate() {
   const [uploading, setUploading] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [selectedCompany, setSelectedCompany] = useState(null);
+  const [companySearch, setCompanySearch] = useState("");
+  const [companyOpen, setCompanyOpen] = useState(false);
+
+  // Close company dropdown on outside click
+  useEffect(() => {
+    if (!companyOpen) return;
+    const handler = (e) => {
+      if (!e.target.closest("[data-company-dropdown]")) setCompanyOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [companyOpen]);
 
   const [form, setForm] = useState({
     company_id: params.get("company_id") || "",
@@ -151,19 +163,76 @@ export default function TicketCreate() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="sm:col-span-2">
                 <Label className="text-xs font-bold">Select company *</Label>
-                <Select value={form.company_id} onValueChange={(v) => setF("company_id", v)}>
-                  <SelectTrigger className="mt-1.5 h-11" data-testid="company-select">
-                    <SelectValue placeholder="Choose a company…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {companies.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        <span className="font-mono text-xs text-slate-500 mr-2">{c.company_code}</span>
-                        {c.company_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="relative mt-1.5" data-company-dropdown>
+                  <button
+                    type="button"
+                    onClick={() => { setCompanyOpen((o) => !o); setCompanySearch(""); }}
+                    className="w-full h-11 px-3 flex items-center justify-between rounded-md border border-slate-200 bg-white text-sm hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-navy/20"
+                    data-testid="company-select"
+                  >
+                    {selectedCompany ? (
+                      <span className="flex items-center gap-2">
+                        <span className="font-mono text-xs text-slate-500">{selectedCompany.company_code}</span>
+                        <span>{selectedCompany.company_name}</span>
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">Choose a company…</span>
+                    )}
+                    <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+                  </button>
+
+                  {companyOpen && (
+                    <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-md shadow-lg">
+                      <div className="p-2 border-b border-slate-100">
+                        <div className="relative">
+                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                          <input
+                            autoFocus
+                            type="text"
+                            value={companySearch}
+                            onChange={(e) => setCompanySearch(e.target.value)}
+                            placeholder="Search company…"
+                            className="w-full pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-navy/20"
+                          />
+                        </div>
+                      </div>
+                      <div className="max-h-52 overflow-y-auto">
+                        {companies
+                          .filter((c) =>
+                            !companySearch ||
+                            c.company_name.toLowerCase().includes(companySearch.toLowerCase()) ||
+                            c.company_code.toLowerCase().includes(companySearch.toLowerCase())
+                          )
+                          .map((c) => (
+                            <button
+                              key={c.id}
+                              type="button"
+                              onClick={() => {
+                                setF("company_id", c.id);
+                                setCompanyOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2.5 text-sm flex items-center justify-between hover:bg-slate-50 ${
+                                form.company_id === c.id ? "bg-blue-50 text-navy" : ""
+                              }`}
+                            >
+                              <span className="flex items-center gap-2">
+                                <span className="font-mono text-xs text-slate-400">{c.company_code}</span>
+                                <span className="font-medium">{c.company_name}</span>
+                              </span>
+                              {form.company_id === c.id && <Check className="w-3.5 h-3.5 text-blue-600 shrink-0" />}
+                            </button>
+                          ))}
+                        {companies.filter((c) =>
+                          !companySearch ||
+                          c.company_name.toLowerCase().includes(companySearch.toLowerCase()) ||
+                          c.company_code.toLowerCase().includes(companySearch.toLowerCase())
+                        ).length === 0 && (
+                          <div className="px-3 py-4 text-sm text-slate-400 text-center">No companies found</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               {selectedCompany && (
                 <div className="sm:col-span-2 p-3 bg-slate-50 rounded-md border border-slate-200 text-xs">

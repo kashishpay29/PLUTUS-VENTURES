@@ -6,7 +6,7 @@ import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { StatusBadge, STATUS_LABEL, formatDate } from "../../lib/status";
-import { Search, PlusCircle, LayoutGrid, List as ListIcon } from "lucide-react";
+import { Search, PlusCircle, LayoutGrid, List as ListIcon , Wifi } from "lucide-react";
 
 const COLUMNS = [
   "open", "assigned", "accepted", "travelling",
@@ -18,6 +18,7 @@ export default function TicketBoard() {
   const [tickets, setTickets] = useState([]);
   const [q, setQ] = useState("");
   const [view, setView] = useState("board");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   const load = async () => {
     try {
@@ -32,14 +33,28 @@ export default function TicketBoard() {
     return () => clearInterval(t);
   }, []);
 
+  const STATUS_FILTERS = [
+    { value: "all",         label: "All" },
+    { value: "open",        label: "Open" },
+    { value: "assigned",    label: "Assigned" },
+    { value: "accepted",    label: "Accepted" },
+    { value: "travelling",  label: "Travelling" },
+    { value: "in_progress", label: "In Progress" },
+    { value: "resolved",    label: "Resolved" },
+    { value: "closed",      label: "Closed" },
+  ];
+
   const filtered = tickets.filter((t) => {
+    if (statusFilter !== "all" && t.status !== statusFilter) return false;
     if (!q) return true;
     const s = q.toLowerCase();
     return (
       t.ticket_number?.toLowerCase().includes(s) ||
       t.customer_name?.toLowerCase().includes(s) ||
       t.device?.device_id?.toLowerCase().includes(s) ||
-      t.engineer?.name?.toLowerCase().includes(s)
+      t.engineer?.name?.toLowerCase().includes(s) ||
+      t.customer_company?.toLowerCase().includes(s) ||
+      t.company?.name?.toLowerCase().includes(s)
     );
   });
 
@@ -80,10 +95,38 @@ export default function TicketBoard() {
         <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search by ticket #, customer, device, engineer…"
+          placeholder="Search by ticket #, customer, company, device, engineer…"
           className="pl-9 h-11"
           data-testid="ticket-search-input"
         />
+      </div>
+
+      {/* Status filter chips */}
+      <div className="flex flex-wrap gap-2">
+        {STATUS_FILTERS.map((f) => (
+          <button
+            key={f.value}
+            onClick={() => setStatusFilter(f.value)}
+            className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${
+              statusFilter === f.value
+                ? "bg-navy text-white border-navy"
+                : "bg-white text-slate-600 border-slate-200 hover:border-navy hover:text-navy"
+            }`}
+          >
+            {f.label}
+            {f.value !== "all" && (
+              <span className="ml-1.5 opacity-60">
+                {tickets.filter(t => t.status === f.value).length}
+              </span>
+            )}
+          </button>
+        ))}
+        {statusFilter !== "all" && (
+          <button onClick={() => setStatusFilter("all")}
+            className="px-3 py-1.5 rounded-full text-xs font-bold text-slate-400 hover:text-red-500">
+            ✕ Clear
+          </button>
+        )}
       </div>
 
       {view === "board" && (
@@ -125,11 +168,16 @@ export default function TicketBoard() {
                             </div>
                             <div className="mt-3 flex items-center justify-between">
                               {t.engineer ? (
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex items-center gap-1.5 flex-wrap">
                                   <div className="w-5 h-5 rounded-full bg-navy text-white grid place-items-center text-[10px] font-bold">
                                     {t.engineer.name?.[0]?.toUpperCase()}
                                   </div>
                                   <span className="text-xs text-slate-600 truncate max-w-[100px]">{t.engineer.name}</span>
+                                  {t.engineer.is_remote && (
+                                    <span className="flex items-center gap-0.5 text-[9px] font-bold uppercase px-1 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                                      <Wifi className="w-2 h-2" /> Remote
+                                    </span>
+                                  )}
                                 </div>
                               ) : (
                                 <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Unassigned</span>
@@ -162,6 +210,7 @@ export default function TicketBoard() {
                 <th className="p-3 font-bold">Customer</th>
                 <th className="p-3 font-bold">Device</th>
                 <th className="p-3 font-bold">Engineer</th>
+                <th className="p-3 font-bold">Created by</th>
                 <th className="p-3 font-bold">Status</th>
                 <th className="p-3 font-bold">Created</th>
               </tr>
@@ -184,6 +233,16 @@ export default function TicketBoard() {
                     <div className="text-xs font-mono text-slate-500">{t.device?.device_id}</div>
                   </td>
                   <td className="p-3 text-slate-700">{t.engineer?.name || "—"}</td>
+                  <td className="p-3">
+                    {t.created_by_user ? (
+                      <div>
+                        <div className="text-sm font-semibold text-navy">{t.created_by_user.name}</div>
+                        <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-full ${
+                          t.created_by_user.role === "admin" ? "bg-navy/10 text-navy" : "bg-purple-100 text-purple-700"
+                        }`}>{t.created_by_user.role === "sub_admin" ? "Sub Admin" : "Admin"}</span>
+                      </div>
+                    ) : <span className="text-slate-400">—</span>}
+                  </td>
                   <td className="p-3"><StatusBadge status={t.status} /></td>
                   <td className="p-3 text-xs text-slate-500">{formatDate(t.created_at)}</td>
                 </tr>

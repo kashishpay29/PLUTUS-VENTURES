@@ -2,22 +2,29 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { api } from "../../lib/api";
+import { useAuth } from "../../lib/auth";
 import { Card } from "../../components/ui/card";
-import { Inbox, Wrench, CheckCircle2, ChevronRight } from "lucide-react";
+import { Switch } from "../../components/ui/switch";
+import { Inbox, Wrench, CheckCircle2, ChevronRight, Wifi, WifiOff } from "lucide-react";
 import { StatusBadge, formatDate } from "../../lib/status";
+import { toast } from "sonner";
 
 export default function EngineerHome() {
+  const { user, setUser } = useAuth();
   const [stats, setStats] = useState(null);
   const [tickets, setTickets] = useState([]);
+  const [isRemote, setIsRemote] = useState(false);
 
   const load = async () => {
     try {
-      const [s, t] = await Promise.all([
+      const [s, t, me] = await Promise.all([
         api.get("/dashboard/engineer"),
         api.get("/tickets"),
+        api.get("/auth/me"),
       ]);
       setStats(s.data);
       setTickets(t.data);
+      setIsRemote(me.data.is_remote || false);
     } catch {}
   };
 
@@ -26,6 +33,17 @@ export default function EngineerHome() {
     const i = setInterval(load, 10000);
     return () => clearInterval(i);
   }, []);
+
+  const toggleRemote = async (val) => {
+    try {
+      setIsRemote(val);
+      await api.patch(`/engineers/${user.id}`, { is_remote: val });
+      toast.success(val ? "Switched to remote work" : "Switched to on-site work");
+    } catch {
+      setIsRemote(!val);
+      toast.error("Failed to update work mode");
+    }
+  };
 
   if (!stats) return <div className="p-4 text-slate-500">Loading…</div>;
 
@@ -39,6 +57,29 @@ export default function EngineerHome() {
         <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Today</div>
         <h1 className="font-display font-black text-2xl tracking-tight text-navy">Your shift</h1>
       </div>
+
+      {/* Remote toggle */}
+      <Card className={`p-4 rounded-md border-2 ${isRemote ? "border-blue-200 bg-blue-50" : "border-slate-100 bg-slate-50"}`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-full grid place-items-center ${isRemote ? "bg-blue-100" : "bg-slate-200"}`}>
+              {isRemote
+                ? <Wifi className="w-5 h-5 text-blue-600" />
+                : <WifiOff className="w-5 h-5 text-slate-500" />
+              }
+            </div>
+            <div>
+              <div className={`font-bold text-sm ${isRemote ? "text-blue-700" : "text-slate-700"}`}>
+                {isRemote ? "Working Remotely" : "Working On-Site"}
+              </div>
+              <div className="text-xs text-slate-500">
+                {isRemote ? "You are marked as remote" : "Toggle if you are not travelling today"}
+              </div>
+            </div>
+          </div>
+          <Switch checked={isRemote} onCheckedChange={toggleRemote} />
+        </div>
+      </Card>
 
       {/* Stats grid */}
       <div className="grid grid-cols-3 gap-3">

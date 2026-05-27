@@ -1,7 +1,3 @@
-"""
-Pluggable file storage providers: local fs (default), AWS S3, Cloudinary.
-Select via STORAGE_PROVIDER env: "local" | "s3" | "cloudinary".
-"""
 import os
 import io
 import uuid
@@ -15,7 +11,6 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 STORAGE_ROOT = Path(os.environ.get("STORAGE_PATH", BASE_DIR / "storage"))
-
 
 # ---------- Local ----------
 class LocalStorage:
@@ -53,7 +48,6 @@ class LocalStorage:
             logger.error(f"Delete failed for {path}: {e}")
             return False
 
-
 # ---------- S3 ----------
 class S3Storage:
     def __init__(self):
@@ -88,7 +82,6 @@ class S3Storage:
         except Exception as e:
             logger.error(f"S3 delete failed: {e}")
             return False
-
 
 # ---------- Cloudinary ----------
 class CloudinaryStorage:
@@ -135,9 +128,7 @@ class CloudinaryStorage:
             logger.error(f"Cloudinary delete failed: {e}")
             return False
 
-
 _backend = None
-
 
 def get_backend():
     global _backend
@@ -154,20 +145,16 @@ def get_backend():
         logger.info("Storage provider: Local filesystem")
     return _backend
 
-
 # Public API used by server.py
 def init_storage():
     get_backend()
     return True
 
-
 def put_object(path: str, data: bytes, content_type: str = "application/octet-stream"):
     return get_backend().put(path, data, content_type)
 
-
 def get_object(path: str):
     return get_backend().get(path)
-
 
 def delete_object(path: str) -> bool:
     return get_backend().delete(path)
