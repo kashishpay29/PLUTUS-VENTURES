@@ -39,6 +39,7 @@ export default function DeviceHistoryPage() {
   // Data
   const [showDeleted, setShowDeleted] = useState(false);
   const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -60,19 +61,21 @@ export default function DeviceHistoryPage() {
     setLoading(true);
     try {
       const params = buildParams();
+      params.set("page", page);
+      params.set("per_page", PAGE_SIZE);
       if (showDeleted) params.set("only_deleted", "1");
       const { data } = await api.get(`/device-history/filter?${params.toString()}`);
       const items = (data.items || []).map((r) => ({ ...r, _deleted: !!r.is_deleted }));
       setRows(items);
-      setPage(1);
+      setTotal(data.total || 0);
     } catch (err) {
       toast.error(formatError(err.response?.data?.detail) || "Failed to load history");
     } finally {
       setLoading(false);
     }
-  }, [buildParams, showDeleted]);
+  }, [buildParams, showDeleted, page]);
 
-  useEffect(() => { load(); }, [showDeleted]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [load]);
 
   const resetFilters = () => {
     setCompany("");
@@ -80,6 +83,7 @@ export default function DeviceHistoryPage() {
     setEndDate(isoToday());
     setSearch("");
     setShowDeleted(false);
+    setPage(1);
     setTimeout(load, 0);
   };
 
@@ -151,12 +155,8 @@ export default function DeviceHistoryPage() {
   }, [rows, search]);
 
   // Pagination
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageRows = useMemo(
-    () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [filtered, page]
-  );
-  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [totalPages, page]);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageRows = filtered;
 
   return (
     <div className="space-y-6" data-testid="device-history-page">
@@ -266,10 +266,7 @@ export default function DeviceHistoryPage() {
           </label>
         </div>
         <div className="text-xs text-slate-500" data-testid="device-history-summary">
-          Showing <b>{pageRows.length}</b> of <b>{filtered.length}</b> records
-          {rows.length !== filtered.length && (
-            <> (filtered from {rows.length} total)</>
-          )}
+          Showing <b>{pageRows.length}</b> of <b>{total}</b> records
         </div>
       </div>
 

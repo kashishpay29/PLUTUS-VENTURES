@@ -546,6 +546,10 @@ async def startup():
     db.tickets.create_index("status")
     db.tickets.create_index("assigned_engineer_id")
     db.tickets.create_index("company_id")
+    db.tickets.create_index([("created_at", -1)])
+    db.tickets.create_index([("company_id", 1), ("created_at", -1)])
+    db.tickets.create_index([("status", 1), ("created_at", -1)])
+    db.tickets.create_index("is_deleted")
     db.devices.create_index("warranty_expiry")
     db.devices.create_index("device_id", unique=True)
     db.devices.create_index(
@@ -554,6 +558,9 @@ async def startup():
         partialFilterExpression={"serial_number": {"$type": "string"}},
     )  # globally unique when provided; blank serials are not indexed
     db.devices.create_index("company_id")
+    db.devices.create_index("brand")
+    db.devices.create_index("model")
+    db.devices.create_index("device_name")
     db.ticket_status_logs.create_index("ticket_id")
     db.ticket_status_logs.create_index([("timestamp", -1)])
     db.service_reports.create_index("ticket_id", unique=True)
@@ -800,11 +807,14 @@ async def list_engineers(available_only: bool = False,
         q["is_active"] = True
         q["is_available"] = True
     engs = list(db.users.find(q, {"_id": 0, "password_hash": 0}))
+    eng_ids = [e["id"] for e in engs]
+    active_tickets = db.tickets.aggregate([
+        {"$match": {"assigned_engineer_id": {"$in": eng_ids}, "status": {"$nin": ["closed", "rejected", "report_generated"]}}},
+        {"$group": {"_id": "$assigned_engineer_id", "count": {"$sum": 1}}}
+    ])
+    ticket_counts = {doc["_id"]: doc["count"] for doc in active_tickets}
     for e in engs:
-        e["active_tickets"] = db.tickets.count_documents({
-            "assigned_engineer_id": e["id"],
-            "status": {"$nin": ["closed", "rejected", "report_generated"]},
-        })
+        e["active_tickets"] = ticket_counts.get(e["id"], 0)
     return engs
 
 
@@ -1117,6 +1127,8 @@ async def delete_company(company_id: str):
 @api.get("/devices")
 async def list_devices(q: Optional[str] = None,
                        company_id: Optional[str] = None,
+                       page: int = Query(1, ge=1),
+                       per_page: int = Query(100, ge=1, le=500),
                        user=Depends(get_current_user)):
     query: Dict[str, Any] = {}
     if company_id:
@@ -1129,8 +1141,10 @@ async def list_devices(q: Optional[str] = None,
             {"model": {"$regex": q, "$options": "i"}},
             {"device_name": {"$regex": q, "$options": "i"}},
         ]
-    devices = list(db.devices.find(query, {"_id": 0}).sort("created_at", -1))
-    return devices
+    skip = (page - 1) * per_page
+    total = db.devices.count_documents(query)
+    devices = list(db.devices.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(per_page))
+    return {"items": devices, "total": total, "page": page, "per_page": per_page}
 
 
 @api.get("/devices/history-export")
@@ -1161,9 +1175,12 @@ async def export_device_history(
 
     tickets = list(db.tickets.find(ticket_filter, {"_id": 0}).sort("created_at", -1).limit(1000))
     device_ids = list({t.get("device_id") for t in tickets if t.get("device_id")})
-    devices_map = {d["device_id"]: d for d in db.devices.find({"device_id": {"$in": device_ids}}, {"_id": 0})}
-    companies_map = {c["id"]: c for c in db.companies.find({}, {"_id": 0, "id": 1, "company_name": 1})}
-    engineers_map = {e["id"]: e["name"] for e in db.users.find({"role": "engineer"}, {"_id": 0, "id": 1, "name": 1})}
+    company_ids = list({t.get("company_id") for t in tickets if t.get("company_id")})
+    eng_ids = list({t.get("assigned_engineer_id") for t in tickets if t.get("assigned_engineer_id")})
+
+    devices_map = {d["device_id"]: d for d in db.devices.find({"device_id": {"$in": device_ids}}, {"_id": 0})} if device_ids else {}
+    companies_map = {c["id"]: c for c in db.companies.find({"id": {"$in": company_ids}}, {"_id": 0, "id": 1, "company_name": 1})} if company_ids else {}
+    engineers_map = {e["id"]: e["name"] for e in db.users.find({"id": {"$in": eng_ids}, "role": "engineer"}, {"_id": 0, "id": 1, "name": 1})} if eng_ids else {}
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -1249,54 +1266,23 @@ def _build_device_history_query(company: Optional[str], start_date: Optional[str
 
 
 def _enrich_history_rows(tickets: List[dict]) -> List[dict]:
-    """Attach device_id, company_name, engineer_name, dates, reference numbers to ticket rows."""
-    device_ids = list({t.get("device_id") for t in tickets if t.get("device_id")})
-    devices_map = {
-        d["device_id"]: d for d in db.devices.find(
-            {"device_id": {"$in": device_ids}}, {"_id": 0}
-        )
-    } if device_ids else {}
-    company_ids = list({t.get("company_id") for t in tickets if t.get("company_id")})
-    companies_map = {
-        c["id"]: c for c in db.companies.find(
-            {"id": {"$in": company_ids}}, {"_id": 0}
-        )
-    } if company_ids else {}
-    eng_ids = list({t.get("assigned_engineer_id") for t in tickets if t.get("assigned_engineer_id")})
-    engineers_map = {
-        e["id"]: e for e in db.users.find(
-            {"id": {"$in": eng_ids}, "role": "engineer"},
-            {"_id": 0, "id": 1, "name": 1},
-        )
-    } if eng_ids else {}
-
+    """Format ticket rows without N+1 queries - assume data already denormalized."""
     rows = []
     for t in tickets:
-        dev = devices_map.get(t.get("device_id"), {})
-        comp = companies_map.get(t.get("company_id"), {})
-        eng = engineers_map.get(t.get("assigned_engineer_id"), {})
         rows.append({
             "id": t.get("id"),
             "device_id": t.get("device_id"),
             "ticket_id": t.get("ticket_no") or t.get("ticket_number") or t.get("id"),
-            "company_name": comp.get("company_name") or t.get("company_name"),
-            "engineer_name": eng.get("name") or t.get("assigned_engineer_name"),
+            "company_name": t.get("company_name", "—"),
+            "engineer_name": t.get("assigned_engineer_name", "—"),
             "status": t.get("status"),
             "created_date": (t.get("created_at") or "")[:19].replace("T", " "),
             "closed_date": (
                 (t.get("approved_at") or t.get("completed_at") or "")[:19].replace("T", " ")
                 if t.get("status") == "closed" else ""
             ),
-            "product_reference_number": (
-                t.get("product_reference_number")
-                or comp.get("product_ref_number")
-                or dev.get("product_reference_number")
-            ),
-            "oem_reference_number": (
-                t.get("oem_reference_number")
-                or comp.get("oem_ref_number")
-                or dev.get("oem_reference_number")
-            ),
+            "product_reference_number": t.get("product_reference_number", "—"),
+            "oem_reference_number": t.get("oem_reference_number", "—"),
             "is_deleted": bool(t.get("is_deleted", False)),
         })
     return rows
@@ -1309,9 +1295,11 @@ async def list_device_history(
     end_date: Optional[str] = None,
     include_deleted: bool = False,
     only_deleted: bool = False,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=500),
     user=Depends(require_sub_admin),
 ):
-    """List device service history with optional company / date-range filters."""
+    """List device service history with pagination."""
     q = _build_device_history_query(company, start_date, end_date,
                                     include_deleted=include_deleted,
                                     only_deleted=only_deleted)
@@ -1321,8 +1309,11 @@ async def list_device_history(
         if assigned_ids:
             scope.append({"company_id": {"$in": assigned_ids}})
         q["$or"] = scope
-    tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).limit(2000))
-    return {"items": _enrich_history_rows(tickets), "total": len(tickets)}
+
+    skip = (page - 1) * per_page
+    total = db.tickets.count_documents(q)
+    tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(per_page))
+    return {"items": _enrich_history_rows(tickets), "total": total, "page": page, "per_page": per_page}
 
 
 @api.get("/device-history/filter")
@@ -1332,9 +1323,11 @@ async def filter_device_history(
     end_date: Optional[str] = None,
     include_deleted: bool = False,
     only_deleted: bool = False,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=500),
     user=Depends(require_sub_admin),
 ):
-    """Filter device history by company and date range (admin / sub_admin)."""
+    """Filter device history by company and date range with pagination."""
     q = _build_device_history_query(company, start_date, end_date,
                                     include_deleted=include_deleted,
                                     only_deleted=only_deleted)
@@ -1344,8 +1337,11 @@ async def filter_device_history(
         if assigned_ids:
             scope.append({"company_id": {"$in": assigned_ids}})
         q["$or"] = scope
-    tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).limit(2000))
-    return {"items": _enrich_history_rows(tickets), "total": len(tickets)}
+
+    skip = (page - 1) * per_page
+    total = db.tickets.count_documents(q)
+    tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(per_page))
+    return {"items": _enrich_history_rows(tickets), "total": total, "page": page, "per_page": per_page}
 
 
 @api.get("/device-history/export")
@@ -1672,21 +1668,28 @@ async def list_tickets(
         q["assigned_engineer_id"] = user["id"]
     if user["role"] == "sub_admin":
         q.update(_sub_admin_ticket_scope(user))
+
     tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).limit(500))
+
+    device_ids = list({t.get("device_id") for t in tickets if t.get("device_id")})
+    eng_ids = list({t.get("assigned_engineer_id") for t in tickets if t.get("assigned_engineer_id")})
+
+    devices_map = {d["device_id"]: d for d in db.devices.find(
+        {"device_id": {"$in": device_ids}},
+        {"_id": 0, "brand": 1, "model": 1, "device_id": 1, "warranty_status": 1, "device_name": 1}
+    )} if device_ids else {}
+
+    engineers_map = {e["id"]: e for e in db.users.find(
+        {"id": {"$in": eng_ids}},
+        {"_id": 0, "name": 1, "id": 1}
+    )} if eng_ids else {}
+
     for t in tickets:
         if t.get("device_id"):
-            device = db.devices.find_one(
-                {"device_id": t["device_id"]},
-                {"_id": 0, "brand": 1, "model": 1, "device_id": 1,
-                 "warranty_status": 1, "device_name": 1}
-            )
-            t["device"] = device
+            t["device"] = devices_map.get(t["device_id"])
         if t.get("assigned_engineer_id"):
-            eng = db.users.find_one(
-                {"id": t["assigned_engineer_id"]},
-                {"_id": 0, "name": 1, "id": 1}
-            )
-            t["engineer"] = eng
+            t["engineer"] = engineers_map.get(t["assigned_engineer_id"])
+
     return tickets
 
 

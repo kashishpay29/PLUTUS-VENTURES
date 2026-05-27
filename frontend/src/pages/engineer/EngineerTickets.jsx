@@ -18,7 +18,7 @@ export default function EngineerTickets() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 10000);
+    const t = setInterval(load, 60000); // poll every 60 seconds instead of 10
     return () => clearInterval(t);
   }, []);
 
