@@ -38,17 +38,17 @@ export default function DevicesPage() {
     }
   }, []);
 
-  useEffect(() => { load(""); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    const t = setTimeout(() => load(q), 300);
+    const t = setTimeout(() => load(q), q ? 300 : 0);
     return () => clearTimeout(t);
   }, [q, load]);
 
   useEffect(() => {
+    if (!showFilters || companies.length > 0) return;
     api.get("/companies?page_size=200").then(({ data }) => {
       setCompanies(Array.isArray(data) ? data : data.items || []);
     }).catch(() => {});
-  }, []);
+  }, [companies.length, showFilters]);
 
   const openDevice = async (d) => {
     setSelected(d);

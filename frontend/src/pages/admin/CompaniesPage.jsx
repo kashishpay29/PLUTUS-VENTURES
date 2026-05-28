@@ -49,14 +49,12 @@ export default function CompaniesPage() {
   // Load sub-admin's current assigned companies
   useEffect(() => {
     if (isSubAdmin) {
-      api.get("/auth/me").then(({ data }) => {
-        setMyCompanyIds(data?.assigned_company_ids || []);
-      }).catch(() => {});
+      setMyCompanyIds(user?.assigned_company_ids || []);
     }
-  }, [isSubAdmin]);
+  }, [isSubAdmin, user]);
 
   useEffect(() => {
-    const t = setTimeout(load, 250);
+    const t = setTimeout(load, q ? 250 : 0);
     return () => clearTimeout(t);
     // eslint-disable-next-line
   }, [q, status, page]);

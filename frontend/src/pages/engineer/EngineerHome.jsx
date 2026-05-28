@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
 import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { Card } from "../../components/ui/card";
@@ -10,27 +9,21 @@ import { StatusBadge, formatDate } from "../../lib/status";
 import { toast } from "sonner";
 
 export default function EngineerHome() {
-  const { user, setUser } = useAuth();
+  const { user } = useAuth();
   const [stats, setStats] = useState(null);
-  const [tickets, setTickets] = useState([]);
   const [isRemote, setIsRemote] = useState(false);
 
   const load = async () => {
     try {
-      const [s, t, me] = await Promise.all([
-        api.get("/dashboard/engineer"),
-        api.get("/tickets"),
-        api.get("/auth/me"),
-      ]);
-      setStats(s.data);
-      setTickets(Array.isArray(t.data) ? t.data : t.data.items || []);
-      setIsRemote(me.data.is_remote || false);
+      const { data } = await api.get("/dashboard/engineer");
+      setStats(data);
+      setIsRemote(data.is_remote || false);
     } catch {}
   };
 
   useEffect(() => {
     load();
-    const i = setInterval(load, 10000);
+    const i = setInterval(load, 60000);
     return () => clearInterval(i);
   }, []);
 
@@ -47,9 +40,7 @@ export default function EngineerHome() {
 
   if (!stats) return <div className="p-4 text-slate-500">Loading…</div>;
 
-  const active = tickets.filter((t) =>
-    ["assigned", "accepted", "travelling", "reached_site", "in_progress"].includes(t.status)
-  );
+  const active = stats.active_tickets || [];
 
   return (
     <div className="px-4 py-5 space-y-5" data-testid="engineer-home">
@@ -94,8 +85,8 @@ export default function EngineerHome() {
           <Link to="/engineer/tickets" className="text-xs font-bold text-signal">View all →</Link>
         </div>
         <div className="space-y-3">
-          {active.map((t, i) => (
-            <motion.div key={t.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}>
+          {active.map((t) => (
+            <div key={t.id}>
               <Link to={`/engineer/tickets/${t.id}`}>
                 <Card className={`p-4 rounded-md border-l-4 border-status-${t.status} hover-lift`}
                       data-testid={`engineer-ticket-card-${t.ticket_number}`}>
@@ -111,7 +102,7 @@ export default function EngineerHome() {
                   </div>
                 </Card>
               </Link>
-            </motion.div>
+            </div>
           ))}
           {active.length === 0 && (
             <Card className="p-8 text-center rounded-md">

@@ -7,6 +7,7 @@ import os
 import uuid
 import logging
 import random
+import time
 from datetime import datetime, timezone, timedelta
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -45,6 +46,7 @@ logging.basicConfig(
     format='%(asctime)s | %(levelname)s | %(name)s | %(message)s'
 )
 logger = logging.getLogger("plutus-serviceops")
+_RESPONSE_CACHE: Dict[str, Any] = {}
 
 
 def send_ticket_email(to_email: str, ticket: dict, pdf_bytes: bytes = None,
@@ -277,6 +279,26 @@ def _sub_admin_ticket_scope(user: dict) -> Dict[str, Any]:
     if assigned_company_ids:
         scope.append({"company_id": {"$in": assigned_company_ids}})
     return {"$or": scope}
+
+def _cache_key(prefix: str, user: dict, *parts: Any) -> str:
+    assigned = ",".join(sorted(user.get("assigned_company_ids") or []))
+    values = [prefix, user.get("id", ""), user.get("role", ""), assigned]
+    values.extend(str(part) for part in parts)
+    return "|".join(values)
+
+def _cache_get(key: str):
+    item = _RESPONSE_CACHE.get(key)
+    if not item:
+        return None
+    expires_at, value = item
+    if expires_at < time.time():
+        _RESPONSE_CACHE.pop(key, None)
+        return None
+    return value
+
+def _cache_set(key: str, value: Any, ttl_seconds: int):
+    _RESPONSE_CACHE[key] = (time.time() + ttl_seconds, value)
+    return value
 
 def _seq(name: str) -> int:
     doc = db.counters.find_one_and_update(
@@ -512,6 +534,10 @@ async def startup():
     db.tickets.create_index([("created_at", -1)])
     db.tickets.create_index([("company_id", 1), ("created_at", -1)])
     db.tickets.create_index([("status", 1), ("created_at", -1)])
+    db.tickets.create_index([("is_deleted", 1), ("created_at", -1)])
+    db.tickets.create_index([("assigned_engineer_id", 1), ("is_deleted", 1), ("created_at", -1)])
+    db.tickets.create_index([("assigned_engineer_id", 1), ("status", 1), ("is_deleted", 1), ("created_at", -1)])
+    db.tickets.create_index([("company_id", 1), ("status", 1), ("is_deleted", 1), ("created_at", -1)])
     db.tickets.create_index("is_deleted")
     db.devices.create_index("warranty_expiry")
     db.devices.create_index("device_id", unique=True)
@@ -521,6 +547,8 @@ async def startup():
         partialFilterExpression={"serial_number": {"$type": "string"}},
     )  # globally unique when provided; blank serials are not indexed
     db.devices.create_index("company_id")
+    db.devices.create_index([("company_id", 1), ("created_at", -1)])
+    db.devices.create_index([("warranty_status", 1), ("warranty_expiry", 1)])
     db.devices.create_index("brand")
     db.devices.create_index("model")
     db.devices.create_index("device_name")
@@ -975,7 +1003,12 @@ async def list_companies(
         {
             "$facet": {
                 "count": [{"$count": "total"}],
-                "items": [{"$sort": {"created_at": -1}}, {"$skip": skip}, {"$limit": page_size}]
+                "items": [
+                    {"$sort": {"created_at": -1}},
+                    {"$skip": skip},
+                    {"$limit": page_size},
+                    {"$project": {"_id": 0}},
+                ]
             }
         }
     ]
@@ -1096,7 +1129,27 @@ async def list_devices(q: Optional[str] = None,
         {
             "$facet": {
                 "count": [{"$count": "total"}],
-                "items": [{"$sort": {"created_at": -1}}, {"$skip": skip}, {"$limit": per_page}]
+                "items": [
+                    {"$sort": {"created_at": -1}},
+                    {"$skip": skip},
+                    {"$limit": per_page},
+                    {"$project": {
+                        "_id": 0,
+                        "id": 1,
+                        "device_id": 1,
+                        "company_id": 1,
+                        "company_name": 1,
+                        "brand": 1,
+                        "model": 1,
+                        "device_name": 1,
+                        "device_type": 1,
+                        "serial_number": 1,
+                        "warranty_status": 1,
+                        "warranty_expiry": 1,
+                        "purchase_date": 1,
+                        "created_at": 1,
+                    }},
+                ]
             }
         }
     ]
@@ -1279,7 +1332,31 @@ async def list_device_history(
         {
             "$facet": {
                 "count": [{"$count": "total"}],
-                "items": [{"$sort": {"created_at": -1}}, {"$skip": skip}, {"$limit": per_page}]
+                "items": [
+                    {"$sort": {"created_at": -1}},
+                    {"$skip": skip},
+                    {"$limit": per_page},
+                    {"$project": {
+                        "_id": 0,
+                        "id": 1,
+                        "ticket_no": 1,
+                        "ticket_number": 1,
+                        "company_id": 1,
+                        "company_name": 1,
+                        "customer_name": 1,
+                        "customer_phone": 1,
+                        "customer_email": 1,
+                        "customer_company": 1,
+                        "priority": 1,
+                        "device_id": 1,
+                        "status": 1,
+                        "assigned_engineer_id": 1,
+                        "assigned_engineer_name": 1,
+                        "created_by": 1,
+                        "created_at": 1,
+                        "updated_at": 1,
+                    }},
+                ]
             }
         }
     ]
@@ -1324,7 +1401,27 @@ async def filter_device_history(
         {
             "$facet": {
                 "count": [{"$count": "total"}],
-                "items": [{"$sort": {"created_at": -1}}, {"$skip": skip}, {"$limit": per_page}]
+                "items": [
+                    {"$sort": {"created_at": -1}},
+                    {"$skip": skip},
+                    {"$limit": per_page},
+                    {"$project": {
+                        "_id": 0,
+                        "id": 1,
+                        "device_id": 1,
+                        "ticket_no": 1,
+                        "ticket_number": 1,
+                        "company_name": 1,
+                        "assigned_engineer_name": 1,
+                        "status": 1,
+                        "created_at": 1,
+                        "approved_at": 1,
+                        "completed_at": 1,
+                        "product_reference_number": 1,
+                        "oem_reference_number": 1,
+                        "is_deleted": 1,
+                    }},
+                ]
             }
         }
     ]
@@ -1666,7 +1763,27 @@ async def list_tickets(
         {
             "$facet": {
                 "count": [{"$count": "total"}],
-                "items": [{"$sort": {"created_at": -1}}, {"$skip": skip}, {"$limit": per_page}]
+                "items": [
+                    {"$sort": {"created_at": -1}},
+                    {"$skip": skip},
+                    {"$limit": per_page},
+                    {"$project": {
+                        "_id": 0,
+                        "id": 1,
+                        "device_id": 1,
+                        "ticket_no": 1,
+                        "ticket_number": 1,
+                        "company_name": 1,
+                        "assigned_engineer_name": 1,
+                        "status": 1,
+                        "created_at": 1,
+                        "approved_at": 1,
+                        "completed_at": 1,
+                        "product_reference_number": 1,
+                        "oem_reference_number": 1,
+                        "is_deleted": 1,
+                    }},
+                ]
             }
         }
     ]
@@ -1689,7 +1806,7 @@ async def list_tickets(
 
     engineers_map = {e["id"]: e for e in db.users.find(
         {"id": {"$in": eng_ids}},
-        {"_id": 0, "name": 1, "id": 1}
+        {"_id": 0, "name": 1, "id": 1, "is_remote": 1}
     )} if eng_ids else {}
 
     for t in tickets:
@@ -2336,6 +2453,10 @@ async def attendance_history(user=Depends(require_engineer)):
 # ---------- DASHBOARD ----------
 @api.get("/dashboard/admin", dependencies=[Depends(require_sub_admin)])
 async def admin_dashboard(user=Depends(get_current_user)):
+    cache_key = _cache_key("dashboard-admin", user)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
     try:
         # Scope by assigned companies for sub_admin
         assigned_company_ids = []
@@ -2392,6 +2513,19 @@ async def admin_dashboard(user=Depends(get_current_user)):
             "is_active": True,
             "is_remote": True
         })
+
+        engineer_work_modes = list(db.users.find(
+            {"role": "engineer", "is_active": True},
+            {
+                "_id": 0,
+                "id": 1,
+                "name": 1,
+                "email": 1,
+                "phone": 1,
+                "is_remote": 1,
+                "is_available": 1,
+            },
+        ).sort("name", 1).limit(100))
 
         # ---- Companies ----
         company_query = {"status": "active"}
@@ -2457,12 +2591,13 @@ async def admin_dashboard(user=Depends(get_current_user)):
             db.devices.find(warranty_query, {"_id": 0}).limit(20)
         )
 
-        return {
+        response = {
             "ticket_counts": counts,
             "engineers": {
                 "total": total_eng,
                 "available": available,
-                "remote": remote_eng
+                "remote": remote_eng,
+                "work_modes": engineer_work_modes,
             },
             "companies": {
                 "active": total_co
@@ -2470,6 +2605,7 @@ async def admin_dashboard(user=Depends(get_current_user)):
             "recent_activity": recent,
             "warranty_alerts": warranty_alerts,
         }
+        return _cache_set(cache_key, response, 15)
 
     except Exception as e:
         print("DASHBOARD ERROR:", str(e))
@@ -2477,10 +2613,15 @@ async def admin_dashboard(user=Depends(get_current_user)):
 
 @api.get("/dashboard/engineer")
 async def engineer_dashboard(user=Depends(require_engineer)):
+    cache_key = _cache_key("dashboard-engineer", user)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
     eid = user["id"]
     # Single aggregation instead of 4 count_documents calls
+    base_match = {"assigned_engineer_id": eid, "is_deleted": {"$ne": True}}
     pipeline = [
-        {"$match": {"assigned_engineer_id": eid}},
+        {"$match": base_match},
         {
             "$facet": {
                 "assigned": [{"$match": {"status": {"$in": ["assigned", "accepted"]}}}, {"$count": "count"}],
@@ -2491,20 +2632,59 @@ async def engineer_dashboard(user=Depends(require_engineer)):
         }
     ]
     result = list(db.tickets.aggregate(pipeline))
+    active_statuses = ["assigned", "accepted", "travelling", "reached_site", "in_progress"]
+    active_tickets = list(db.tickets.find(
+        {**base_match, "status": {"$in": active_statuses}},
+        {
+            "_id": 0,
+            "id": 1,
+            "ticket_no": 1,
+            "ticket_number": 1,
+            "customer_name": 1,
+            "status": 1,
+            "created_at": 1,
+            "device_id": 1,
+        },
+    ).sort("created_at", -1).limit(20))
+
+    device_ids = list({t.get("device_id") for t in active_tickets if t.get("device_id")})
+    devices_map = {d["device_id"]: d for d in db.devices.find(
+        {"device_id": {"$in": device_ids}},
+        {"_id": 0, "brand": 1, "model": 1, "device_id": 1}
+    )} if device_ids else {}
+    for ticket in active_tickets:
+        if ticket.get("device_id"):
+            ticket["device"] = devices_map.get(ticket["device_id"])
+
     if result:
         r = result[0]
-        return {
+        response = {
             "assigned": r["assigned"][0]["count"] if r["assigned"] else 0,
             "in_progress": r["in_progress"][0]["count"] if r["in_progress"] else 0,
             "completed": r["completed"][0]["count"] if r["completed"] else 0,
             "resolved": r["resolved"][0]["count"] if r["resolved"] else 0,
+            "is_remote": bool(user.get("is_remote", False)),
+            "active_tickets": active_tickets,
         }
-    return {"assigned": 0, "in_progress": 0, "completed": 0, "resolved": 0}
+        return _cache_set(cache_key, response, 10)
+    response = {
+        "assigned": 0,
+        "in_progress": 0,
+        "completed": 0,
+        "resolved": 0,
+        "is_remote": bool(user.get("is_remote", False)),
+        "active_tickets": active_tickets,
+    }
+    return _cache_set(cache_key, response, 10)
 
 # ---------- ANALYTICS ----------
 @api.get("/analytics", dependencies=[Depends(require_sub_admin)])
 async def analytics(user=Depends(get_current_user)):
     today = date.today()
+    cache_key = _cache_key("analytics", user, today.isoformat())
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     # Scope by assigned companies for sub_admin
     scope = {}
@@ -2675,7 +2855,7 @@ async def analytics(user=Depends(get_current_user)):
             })
     eng_resolution.sort(key=lambda x: x["avg_hours"])
 
-    return {
+    response = {
         "per_day": per_day,
         "engineer_performance": perf,
         "repeat_complaints": repeats,
@@ -2692,6 +2872,7 @@ async def analytics(user=Depends(get_current_user)):
             "by_engineer": eng_resolution,
         },
     }
+    return _cache_set(cache_key, response, 120)
 
 @api.get("/live-locations")
 async def live_locations(user=Depends(require_sub_admin)):
@@ -2704,11 +2885,14 @@ async def live_locations(user=Depends(require_sub_admin)):
         q,
         {"_id": 0}
     ).limit(200))
+    eng_ids = list({t.get("assigned_engineer_id") for t in tickets if t.get("assigned_engineer_id")})
+    engineers = {e["id"]: e for e in db.users.find(
+        {"id": {"$in": eng_ids}},
+        {"_id": 0, "id": 1, "name": 1},
+    )} if eng_ids else {}
     out = []
     for t in tickets:
-        eng = db.users.find_one(
-            {"id": t.get("assigned_engineer_id")}, {"_id": 0, "name": 1}
-        ) if t.get("assigned_engineer_id") else None
+        eng = engineers.get(t.get("assigned_engineer_id"))
         out.append({
             "ticket_id": t["id"],
             "ticket_number": t.get("ticket_no") or t.get("ticket_number"),

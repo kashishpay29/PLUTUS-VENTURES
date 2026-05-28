@@ -47,20 +47,20 @@ export default function EngineerTicketDetail() {
 
   const load = async () => {
     try {
-      const [{ data }, { data: me }] = await Promise.all([
-        api.get(`/tickets/${id}`),
-        api.get("/auth/me"),
-      ]);
+      const { data } = await api.get(`/tickets/${id}`);
       setTicket(data);
-      setIsRemote(me.is_remote || false);
     } catch (err) {
       toast.error(formatError(err.response?.data?.detail));
     }
   };
 
   useEffect(() => {
+    setIsRemote(user?.is_remote || false);
+  }, [user]);
+
+  useEffect(() => {
     load();
-    const t = setInterval(load, 10000);
+    const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 

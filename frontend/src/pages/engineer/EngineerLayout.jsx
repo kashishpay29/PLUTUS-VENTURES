@@ -25,9 +25,12 @@ export default function EngineerLayout() {
       const load = async () => {
         try { const { data } = await api.get("/notifications"); setNotes(data); } catch {}
       };
-      load();
-      const t = setInterval(load, 12000);
-      return () => clearInterval(t);
+      const first = setTimeout(load, 1500);
+      const t = setInterval(load, 60000);
+      return () => {
+        clearTimeout(first);
+        clearInterval(t);
+      };
     }
   }, [user]);
 
@@ -44,7 +47,7 @@ export default function EngineerLayout() {
       <header className="sticky top-0 z-30 bg-[#0A1128] text-white px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <div className="w-10 h-10 rounded-md bg-white grid place-items-center p-1">
-            <img src="/assets/plutus_logo.jpeg" alt="Plutus" className="w-full h-full object-contain" />
+            <img src="/assets/optimized/plutus_logo_256.jpeg" alt="Plutus" className="w-full h-full object-contain" />
           </div>
           <div>
             <div className="text-[10px] uppercase tracking-[0.18em] text-white/60">Engineer • Plutus</div>

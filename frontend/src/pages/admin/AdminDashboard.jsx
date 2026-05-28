@@ -4,7 +4,6 @@ import {
   Ticket as TicketIcon, Users, Activity, AlertTriangle,
   PlusCircle, ArrowUpRight, Clock, Wifi, WifiOff, MapPin
 } from "lucide-react";
-import { motion } from "framer-motion";
 import { api } from "../../lib/api";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -32,12 +31,9 @@ export default function AdminDashboard() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [{ data: fresh }, { data: engData }] = await Promise.all([
-          api.get("/dashboard/admin"),
-          api.get("/engineers"),
-        ]);
+        const { data: fresh } = await api.get("/dashboard/admin");
         setData(fresh);
-        setEngineers(Array.isArray(engData) ? engData : engData.items || []);
+        setEngineers(fresh.engineers?.work_modes || []);
         localStorage.setItem("dashboard", JSON.stringify(fresh));
       } catch (err) {
         console.error("Dashboard fetch error:", err);
@@ -45,7 +41,7 @@ export default function AdminDashboard() {
     };
 
     load();
-    const t = setInterval(load, 12000);
+    const t = setInterval(load, 60000);
     return () => clearInterval(t);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -89,13 +85,8 @@ export default function AdminDashboard() {
 
       {/* Big stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {STAT_CARDS.map((s, i) => (
-          <motion.div
-            key={s.key}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.05 }}
-          >
+        {STAT_CARDS.map((s) => (
+          <div key={s.key}>
             <Card className={`p-5 border-l-4 hover-lift rounded-md border-status-${s.key}`}
                   data-testid={`stat-${s.key}`}>
               <div className="text-xs uppercase tracking-[0.18em] text-slate-500 font-bold">
@@ -106,7 +97,7 @@ export default function AdminDashboard() {
               </div>
               <div className="mt-1 text-[11px] text-slate-500">tickets</div>
             </Card>
-          </motion.div>
+          </div>
         ))}
       </div>
 

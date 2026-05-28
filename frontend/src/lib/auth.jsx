@@ -4,8 +4,16 @@ import { api } from "./api";
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null); // null = loading, false = unauth
   const [token, setToken] = useState(localStorage.getItem("token"));
+  const [user, setUser] = useState(() => {
+    if (!localStorage.getItem("token")) return false;
+    try {
+      const storedUser = localStorage.getItem("user");
+      return storedUser ? JSON.parse(storedUser) : null;
+    } catch {
+      return null;
+    }
+  }); // null = loading, false = unauth
 
   useEffect(() => {
   let ok = true;

@@ -32,6 +32,11 @@ export default function DeviceHistoryPage() {
   const [company, setCompany] = useState("");
   const [startDate, setStartDate] = useState(isoDaysAgo(30));
   const [endDate, setEndDate] = useState(isoToday());
+  const [appliedFilters, setAppliedFilters] = useState(() => ({
+    company: "",
+    startDate: isoDaysAgo(30),
+    endDate: isoToday(),
+  }));
 
   // Local search across the loaded rows
   const [search, setSearch] = useState("");
@@ -51,11 +56,11 @@ export default function DeviceHistoryPage() {
 
   const buildParams = useCallback(() => {
     const p = new URLSearchParams();
-    if (company.trim()) p.set("company", company.trim());
-    if (startDate) p.set("start_date", startDate);
-    if (endDate) p.set("end_date", endDate);
+    if (appliedFilters.company.trim()) p.set("company", appliedFilters.company.trim());
+    if (appliedFilters.startDate) p.set("start_date", appliedFilters.startDate);
+    if (appliedFilters.endDate) p.set("end_date", appliedFilters.endDate);
     return p;
-  }, [company, startDate, endDate]);
+  }, [appliedFilters]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -79,12 +84,19 @@ export default function DeviceHistoryPage() {
 
   const resetFilters = () => {
     setCompany("");
-    setStartDate(isoDaysAgo(30));
-    setEndDate(isoToday());
+    const nextStart = isoDaysAgo(30);
+    const nextEnd = isoToday();
+    setStartDate(nextStart);
+    setEndDate(nextEnd);
+    setAppliedFilters({ company: "", startDate: nextStart, endDate: nextEnd });
     setSearch("");
     setShowDeleted(false);
     setPage(1);
-    setTimeout(load, 0);
+  };
+
+  const applyFilters = () => {
+    setPage(1);
+    setAppliedFilters({ company, startDate, endDate });
   };
 
   const exportExcel = async () => {
@@ -229,7 +241,7 @@ export default function DeviceHistoryPage() {
             />
           </div>
           <Button
-            onClick={load}
+            onClick={applyFilters}
             disabled={loading}
             className="bg-[#2563EB] hover:bg-[#1d4ed8] text-white h-10 gap-2"
             data-testid="device-history-apply-btn"

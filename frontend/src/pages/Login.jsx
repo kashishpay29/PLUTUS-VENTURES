@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate, Navigate } from "react-router-dom";
-import { motion } from "framer-motion";
-import { Loader2, ShieldCheck, ArrowRight } from "lucide-react";
+import { Loader2, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 import { api, formatError } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -17,7 +16,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   if (user && user.id) {
-    return <Navigate to={user.role === "admin" ? "/admin" : "/engineer"} replace />;
+    return <Navigate to={["admin", "sub_admin"].includes(user.role) ? "/admin" : "/engineer"} replace />;
   }
 
   const submitCreds = async (e) => {
@@ -27,7 +26,7 @@ export default function Login() {
       const { data } = await api.post("/auth/login", { email, password });
       login(data.token, data.user);
       toast.success(`Welcome back, ${data.user.name}`);
-      nav(data.user.role === "admin" ? "/admin" : "/engineer");
+      nav(["admin", "sub_admin"].includes(data.user.role) ? "/admin" : "/engineer");
     } catch (err) {
       toast.error(formatError(err.response?.data?.detail) || "Login failed");
     } finally { setLoading(false); }
@@ -39,7 +38,7 @@ export default function Login() {
       <div className="hidden lg:flex lg:col-span-3 flex-col justify-between p-12 text-white">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-md bg-white grid place-items-center p-1.5">
-            <img src="/assets/plutus_logo.jpeg" alt="Plutus" className="w-full h-full object-contain" />
+            <img src="/assets/optimized/plutus_logo_256.jpeg" alt="Plutus" className="w-full h-full object-contain" />
           </div>
           <div>
             <div className="font-display font-black text-2xl tracking-tight">Plutus Ventures</div>
@@ -63,14 +62,10 @@ export default function Login() {
 
       {/* Right – Form */}
       <div className="lg:col-span-2 bg-white flex items-center justify-center p-6 sm:p-10">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="w-full max-w-md"
-        >
+        <div className="w-full max-w-md">
           <div className="lg:hidden flex items-center gap-3 mb-8">
             <div className="w-12 h-12 rounded-md bg-white border border-slate-200 p-1.5">
-              <img src="/assets/plutus_logo.jpeg" alt="Plutus" className="w-full h-full object-contain" />
+              <img src="/assets/optimized/plutus_logo_256.jpeg" alt="Plutus" className="w-full h-full object-contain" />
             </div>
             <div>
               <div className="font-display font-black text-xl text-navy">Plutus Ventures</div>
@@ -127,7 +122,7 @@ export default function Login() {
               </div>
             </div> */}
           </form>
-        </motion.div>
+        </div>
       </div>
     </div>
   );
