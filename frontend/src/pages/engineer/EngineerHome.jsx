@@ -23,7 +23,7 @@ export default function EngineerHome() {
         api.get("/auth/me"),
       ]);
       setStats(s.data);
-      setTickets(t.data);
+      setTickets(Array.isArray(t.data) ? t.data : t.data.items || []);
       setIsRemote(me.data.is_remote || false);
     } catch {}
   };

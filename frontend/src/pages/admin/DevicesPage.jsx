@@ -32,7 +32,7 @@ export default function DevicesPage() {
     try {
       const url = search ? `/devices?q=${encodeURIComponent(search)}` : "/devices";
       const { data } = await api.get(url);
-      setList(data);
+      setList(Array.isArray(data) ? data : data.items || []);
     } catch (err) {
       console.error(err);
     }

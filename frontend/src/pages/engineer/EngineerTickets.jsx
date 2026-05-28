@@ -12,7 +12,7 @@ export default function EngineerTickets() {
   const load = async () => {
     try {
       const { data } = await api.get("/tickets");
-      setTickets(data);
+      setTickets(Array.isArray(data) ? data : data.items || []);
     } catch {}
   };
 

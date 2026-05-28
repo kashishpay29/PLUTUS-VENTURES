@@ -20,7 +20,8 @@ export default function EngineerProfile() {
 
   useEffect(() => {
     api.get("/tickets").then(({ data }) => {
-      setHistory(data.filter((t) => t.status === "completed").slice(0, 20));
+      const tickets = Array.isArray(data) ? data : data.items || [];
+      setHistory(tickets.filter((t) => t.status === "completed").slice(0, 20));
     }).catch(() => {});
 
     api.get("/auth/me").then(({ data }) => {
