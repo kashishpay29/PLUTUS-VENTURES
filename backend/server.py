@@ -525,6 +525,7 @@ async def startup():
     db.devices.create_index("device_name")
     db.ticket_status_logs.create_index("ticket_id")
     db.ticket_status_logs.create_index([("timestamp", -1)])
+    db.ticket_status_logs.create_index([("ticket_id", 1), ("timestamp", -1)])
     db.service_reports.create_index("ticket_id", unique=True)
     db.attachments.create_index("ticket_id")
     db.notifications.create_index("user_id")
@@ -2315,21 +2316,21 @@ async def admin_dashboard(user=Depends(get_current_user)):
         total_co = db.companies.count_documents(company_query)
 
         # ---- Recent activity (LIMITED) ----
-        log_query = {}
         if user.get("role") == "sub_admin":
-            ticket_ids = [
-                t["id"] for t in db.tickets.find(ticket_scope, {"_id": 0, "id": 1})
-            ]
-            log_query["$or"] = [
-                {"ticket_id": {"$in": ticket_ids}},
-                {"target_user_id": user["id"]}
-            ]
-        logs = list(
-            db.ticket_status_logs
-            .find(log_query, {"_id": 0})
-            .sort("timestamp", -1)
-            .limit(5)
-        )
+            ticket_ids = [t["id"] for t in db.tickets.find(ticket_scope, {"_id": 0, "id": 1})]
+            logs = list(
+                db.ticket_status_logs
+                .find({"$or": [{"ticket_id": {"$in": ticket_ids}}, {"target_user_id": user["id"]}]}, {"_id": 0})
+                .sort("timestamp", -1)
+                .limit(5)
+            )
+        else:
+            logs = list(
+                db.ticket_status_logs
+                .find({}, {"_id": 0})
+                .sort("timestamp", -1)
+                .limit(5)
+            )
 
         recent = []
         for l in logs:
@@ -2393,26 +2394,28 @@ async def admin_dashboard(user=Depends(get_current_user)):
 @api.get("/dashboard/engineer")
 async def engineer_dashboard(user=Depends(require_engineer)):
     eid = user["id"]
-    assigned = db.tickets.count_documents(
-        {"assigned_engineer_id": eid, "status": {"$in": ["assigned", "accepted"]}}
-    )
-    in_progress = db.tickets.count_documents(
-        {"assigned_engineer_id": eid,
-         "status": {"$in": ["travelling", "reached_site", "in_progress"]}}
-    )
-    completed = db.tickets.count_documents(
-        {"assigned_engineer_id": eid,
-         "status": {"$in": ["closed", "report_generated", "completed_with_signature"]}}
-    )
-    resolved = db.tickets.count_documents(
-        {"assigned_engineer_id": eid, "status": "resolved"}
-    )
-    return {
-        "assigned": assigned,
-        "in_progress": in_progress,
-        "resolved": resolved,
-        "completed": completed,
-    }
+    # Single aggregation instead of 4 count_documents calls
+    pipeline = [
+        {"$match": {"assigned_engineer_id": eid}},
+        {
+            "$facet": {
+                "assigned": [{"$match": {"status": {"$in": ["assigned", "accepted"]}}}, {"$count": "count"}],
+                "in_progress": [{"$match": {"status": {"$in": ["travelling", "reached_site", "in_progress"]}}}, {"$count": "count"}],
+                "completed": [{"$match": {"status": {"$in": ["closed", "report_generated", "completed_with_signature"]}}}, {"$count": "count"}],
+                "resolved": [{"$match": {"status": "resolved"}}, {"$count": "count"}]
+            }
+        }
+    ]
+    result = list(db.tickets.aggregate(pipeline))
+    if result:
+        r = result[0]
+        return {
+            "assigned": r["assigned"][0]["count"] if r["assigned"] else 0,
+            "in_progress": r["in_progress"][0]["count"] if r["in_progress"] else 0,
+            "completed": r["completed"][0]["count"] if r["completed"] else 0,
+            "resolved": r["resolved"][0]["count"] if r["resolved"] else 0,
+        }
+    return {"assigned": 0, "in_progress": 0, "completed": 0, "resolved": 0}
 
 # ---------- ANALYTICS ----------
 @api.get("/analytics", dependencies=[Depends(require_sub_admin)])
