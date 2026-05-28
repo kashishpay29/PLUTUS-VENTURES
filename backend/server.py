@@ -77,19 +77,14 @@ def send_ticket_email(to_email: str, ticket: dict, pdf_bytes: bytes = None,
         status = ticket.get("status", "").replace("_", " ").title()
         body = f"""
 Dear Customer,
-
 Your service ticket <b>{ticket_no}</b> has been <b>{status}</b>.
-
 <b>Details:</b>
 - Ticket: {ticket_no}
 - Status: {status}
 - Device: {ticket.get("device_id", "—")}
 - Issue: {ticket.get("issue_description") or ticket.get("problem_description", "—")}
-
 {"Please find the service report attached." if pdf_bytes else ""}
-
 Thank you for choosing Plutus Ventures.
-
 Regards,
 Plutus Ventures IT Service Team
         """.strip()
@@ -111,7 +106,6 @@ Plutus Ventures IT Service Team
         logger.info(f"Email sent to {to_email} for ticket {ticket_no}")
     except Exception as e:
         logger.error(f"Email send failed: {e}")
-
 
 def send_ticket_closed_email(to_email: str, ticket: dict, pdf_bytes: bytes = None,
                              sender_name: str = None, sender_email: str = None):
@@ -145,20 +139,15 @@ def send_ticket_closed_email(to_email: str, ticket: dict, pdf_bytes: bytes = Non
 
         body = f"""
 Dear Customer,
-
 Your service ticket <b>{ticket_no}</b> has been <b>closed</b> after successful resolution and approval.
-
 <b>Ticket Details:</b><br/>
 - Ticket ID: {ticket_no}<br/>
 - Product Reference Number: {product_ref}<br/>
 - OEM Reference Number: {oem_ref}<br/>
 - Approval Date &amp; Time: {approved_at_pretty}<br/>
-
 The engineer's service report is attached for your records. If you have any
 questions or need further assistance, please reply to this email.
-
 Thank you for choosing {display_name}.
-
 Regards,<br/>
 {display_name} IT Service Team
         """.strip()
@@ -231,7 +220,6 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 api = APIRouter(prefix="/api")
 
-
 # ---------- Security headers + request logging ----------
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -243,7 +231,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if request.url.scheme == "https":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
-
 
 class RequestLogMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -266,7 +253,6 @@ TICKET_STATUSES = [
     "rejected",
 ]
 
-
 # ---------- Helpers ----------
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -275,14 +261,12 @@ def now_iso():
 def new_id():
     return str(uuid.uuid4())
 
-
 def clean(d):
     if not d:
         return d
     d.pop("_id", None)
     d.pop("password_hash", None)
     return d
-
 
 def _sub_admin_ticket_scope(user: dict) -> Dict[str, Any]:
     """Limit sub-admin ticket visibility to assigned companies plus own tickets."""
@@ -294,7 +278,6 @@ def _sub_admin_ticket_scope(user: dict) -> Dict[str, Any]:
         scope.append({"company_id": {"$in": assigned_company_ids}})
     return {"$or": scope}
 
-
 def _seq(name: str) -> int:
     doc = db.counters.find_one_and_update(
         {"_id": name}, {"$inc": {"sequence_value": 1}},
@@ -302,35 +285,29 @@ def _seq(name: str) -> int:
     )
     return doc["sequence_value"]
 
-
 def next_ticket_number() -> str:
     year = datetime.now(timezone.utc).year
     seq = _seq(f"ticket_{year}")
     return f"TKT-{year}-{seq:04d}"
-
 
 def next_device_id() -> str:
     year = datetime.now(timezone.utc).year
     seq = _seq(f"device_{year}")
     return f"DEV-{year}-{seq:04d}"
 
-
 def next_company_code() -> str:
     seq = _seq("company")
     return f"CMP-{seq:04d}"
-
 
 # ---------- Models ----------
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
-
 class OTPVerifyRequest(BaseModel):
     email: EmailStr
     otp: str
     challenge_id: str
-
 
 class EngineerCreate(BaseModel):
     name: str
@@ -343,7 +320,6 @@ class EngineerCreate(BaseModel):
     address: Optional[str] = None
     is_remote: Optional[bool] = False
     oem_number: Optional[str] = None
-
 
 class EngineerUpdate(BaseModel):
     name: Optional[str] = None
@@ -358,7 +334,6 @@ class EngineerUpdate(BaseModel):
     is_remote: Optional[bool] = None
     oem_number: Optional[str] = None
 
-
 class CompanyCreate(BaseModel):
     company_name: str
     contact_person: Optional[str] = None
@@ -372,7 +347,6 @@ class CompanyCreate(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     pincode: Optional[str] = None
-
 
 class CompanyUpdate(BaseModel):
     company_name: Optional[str] = None
@@ -389,7 +363,6 @@ class CompanyUpdate(BaseModel):
     pincode: Optional[str] = None
     status: Optional[Literal["active", "inactive"]] = None
 
-
 class DeviceCreate(BaseModel):
     brand: str
     model: str
@@ -400,7 +373,6 @@ class DeviceCreate(BaseModel):
     warranty_expiry: Optional[str] = None
     purchase_date: Optional[str] = None
     notes: Optional[str] = None
-
 
 class TicketCreate(BaseModel):
     company_id: str
@@ -414,7 +386,6 @@ class TicketCreate(BaseModel):
     oem_reference_number: Optional[str] = None
     device: DeviceCreate
 
-
 class TicketAssign(BaseModel):
     engineer_id: Optional[str] = None
     is_outsource: bool = False
@@ -424,13 +395,11 @@ class TicketAssign(BaseModel):
     outsource_price: Optional[float] = None
     outsource_notes: Optional[str] = None
 
-
 class ServiceReportCreate(BaseModel):
     work_done: str
     resolution_summary: Optional[str] = None
     parts_used: Optional[List[dict]] = []
     customer_signed_name: Optional[str] = None
-
 
 class StatusUpdate(BaseModel):
     status: Literal[
@@ -443,17 +412,14 @@ class StatusUpdate(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
 
-
 class LocationUpdate(BaseModel):
     latitude: float
     longitude: float
-
 
 class PartItem(BaseModel):
     name: str
     part_number: Optional[str] = None
     quantity: int = 1
-
 
 class ReportSubmit(BaseModel):
     engineer_notes: str
@@ -464,11 +430,9 @@ class ReportSubmit(BaseModel):
     customer_signature: str
     customer_signed_name: Optional[str] = None
 
-
 class AttendanceAction(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
-
 
 # ---------- Startup ----------
 @app.on_event("startup")
@@ -533,8 +497,6 @@ async def startup():
             pass
 
     # Indexes
-    #db.devices.create_index("warranty_expiry")
-    #db.ticket_status_logs.create_index([("timestamp", -1)])
     db.users.create_index("role")
     db.users.create_index("email", unique=True)
     db.users.create_index("id", unique=True)
@@ -687,13 +649,9 @@ async def startup():
     except Exception as e:
         logger.error(f"Error writing test credentials: {e}")
      
-
-
-
 @app.on_event("shutdown")
 async def shutdown():
     client.close()
-
 
 # ---------- AUTH ----------
 @api.post("/auth/login")
@@ -750,7 +708,6 @@ async def verify_otp(request: Request, payload: OTPVerifyRequest):
             if expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
                 raise HTTPException(status_code=400, detail="OTP expired")
   
-
         #  Mark consumed
         db.otp_challenges.update_one(
             {"id": payload.challenge_id},
@@ -787,16 +744,13 @@ async def verify_otp(request: Request, payload: OTPVerifyRequest):
         print("VERIFY OTP ERROR:", str(e))  # 👈 VERY IMPORTANT
         raise HTTPException(status_code=500, detail="Internal error")
 
-
 @api.get("/auth/me")
 async def me(user=Depends(get_current_user)):
     return user
 
-
 @api.post("/auth/logout")
 async def logout(user=Depends(get_current_user)):
     return {"ok": True}
-
 
 # ---------- ENGINEERS ----------
 @api.get("/engineers")
@@ -816,7 +770,6 @@ async def list_engineers(available_only: bool = False,
     for e in engs:
         e["active_tickets"] = ticket_counts.get(e["id"], 0)
     return engs
-
 
 @api.post("/engineers", dependencies=[Depends(require_admin)])
 async def create_engineer(payload: EngineerCreate):
@@ -844,7 +797,6 @@ async def create_engineer(payload: EngineerCreate):
     }
     db.users.insert_one(doc)
     return clean({**doc})
-
 
 @api.patch("/engineers/{eng_id}")
 async def update_engineer(eng_id: str, payload: EngineerUpdate,
@@ -875,14 +827,12 @@ async def update_engineer(eng_id: str, payload: EngineerUpdate,
         raise HTTPException(status_code=404, detail="Engineer not found")
     return db.users.find_one({"id": eng_id}, {"_id": 0, "password_hash": 0})
 
-
 @api.delete("/engineers/{eng_id}", dependencies=[Depends(require_admin)])
 async def delete_engineer(eng_id: str):
     res = db.users.delete_one({"id": eng_id, "role": "engineer"})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Engineer not found")
     return {"ok": True}
-
 
 # ---------- SUB-ADMINS ----------
 class SubAdminCreate(BaseModel):
@@ -893,7 +843,6 @@ class SubAdminCreate(BaseModel):
     employee_id: Optional[str] = None
     designation: Optional[str] = None
     address: Optional[str] = None
-
 
 class SubAdminUpdate(BaseModel):
     name: Optional[str] = None
@@ -907,10 +856,8 @@ class SubAdminUpdate(BaseModel):
     # Only the sub-admin themselves can manage their own company assignments
     # via PATCH /sub-admins/me/companies
 
-
 class SubAdminSelfCompaniesUpdate(BaseModel):
     assigned_company_ids: List[str] = []
-
 
 @api.get("/sub-admins", dependencies=[Depends(require_admin)])
 async def list_sub_admins(q: Optional[str] = None):
@@ -923,7 +870,6 @@ async def list_sub_admins(q: Optional[str] = None):
         ]
     items = list(db.users.find(query, {"_id": 0, "password_hash": 0}).sort("created_at", -1))
     return {"items": items, "total": len(items)}
-
 
 @api.post("/sub-admins", dependencies=[Depends(require_admin)])
 async def create_sub_admin(payload: SubAdminCreate):
@@ -949,7 +895,6 @@ async def create_sub_admin(payload: SubAdminCreate):
     db.users.insert_one(doc)
     return clean({**doc})
 
-
 @api.patch("/sub-admins/{sub_admin_id}", dependencies=[Depends(require_admin)])
 async def update_sub_admin(sub_admin_id: str, payload: SubAdminUpdate):
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
@@ -962,7 +907,6 @@ async def update_sub_admin(sub_admin_id: str, payload: SubAdminUpdate):
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Sub-admin not found")
     return clean(db.users.find_one({"id": sub_admin_id}, {"_id": 0, "password_hash": 0}))
-
 
 @api.patch("/sub-admins/me/companies")
 async def update_my_companies(
@@ -999,14 +943,12 @@ async def update_my_companies(
     })
     return clean(db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0}))
 
-
 @api.delete("/sub-admins/{sub_admin_id}", dependencies=[Depends(require_admin)])
 async def delete_sub_admin(sub_admin_id: str):
     res = db.users.delete_one({"id": sub_admin_id, "role": "sub_admin"})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Sub-admin not found")
     return {"ok": True}
-
 
 # ---------- COMPANIES ----------
 @api.get("/companies")
@@ -1033,7 +975,6 @@ async def list_companies(
                  .sort("created_at", -1).skip(skip).limit(page_size))
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
-
 @api.get("/companies/{company_id}")
 async def get_company(company_id: str, user=Depends(get_current_user)):
     c = db.companies.find_one({"id": company_id}, {"_id": 0})
@@ -1046,7 +987,6 @@ async def get_company(company_id: str, user=Depends(get_current_user)):
         {"company_id": company_id}, {"_id": 0}
     ).sort("created_at", -1).limit(50))
     return {"company": c, "tickets": tickets, "devices": devices}
-
 
 @api.post("/companies", dependencies=[Depends(require_sub_admin)])
 async def create_company(payload: CompanyCreate, admin=Depends(require_sub_admin)):
@@ -1080,7 +1020,6 @@ async def create_company(payload: CompanyCreate, admin=Depends(require_sub_admin
     db.companies.insert_one(doc)
     return clean({**doc})
 
-
 @api.put("/companies/{company_id}", dependencies=[Depends(require_sub_admin)])
 async def update_company(company_id: str, payload: CompanyUpdate):
     existing = db.companies.find_one({"id": company_id})
@@ -1107,7 +1046,6 @@ async def update_company(company_id: str, payload: CompanyUpdate):
                                {"$set": {"company_name": updates["company_name"]}})
     return db.companies.find_one({"id": company_id}, {"_id": 0})
 
-
 @api.delete("/companies/{company_id}", dependencies=[Depends(require_admin)])
 async def delete_company(company_id: str):
     open_tix = db.tickets.count_documents({
@@ -1121,7 +1059,6 @@ async def delete_company(company_id: str):
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Company not found")
     return {"ok": True}
-
 
 # ---------- DEVICES ----------
 @api.get("/devices")
@@ -1145,7 +1082,6 @@ async def list_devices(q: Optional[str] = None,
     total = db.devices.count_documents(query)
     devices = list(db.devices.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(per_page))
     return {"items": devices, "total": total, "page": page, "per_page": per_page}
-
 
 @api.get("/devices/history-export")
 async def export_device_history(
@@ -1223,7 +1159,6 @@ async def export_device_history(
         headers={"Content-Disposition": "attachment; filename=device_history.xlsx"}
     )
 
-
 # ---------- DEVICE HISTORY (Feature 3) ----------
 def _build_device_history_query(company: Optional[str], start_date: Optional[str],
                                 end_date: Optional[str],
@@ -1264,7 +1199,6 @@ def _build_device_history_query(company: Optional[str], start_date: Optional[str
         q.setdefault("created_at", {})["$lte"] = f"{end_date}T23:59:59"
     return q
 
-
 def _enrich_history_rows(tickets: List[dict]) -> List[dict]:
     """Format ticket rows without N+1 queries - assume data already denormalized."""
     rows = []
@@ -1286,7 +1220,6 @@ def _enrich_history_rows(tickets: List[dict]) -> List[dict]:
             "is_deleted": bool(t.get("is_deleted", False)),
         })
     return rows
-
 
 @api.get("/device-history")
 async def list_device_history(
@@ -1315,7 +1248,6 @@ async def list_device_history(
     tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(per_page))
     return {"items": _enrich_history_rows(tickets), "total": total, "page": page, "per_page": per_page}
 
-
 @api.get("/device-history/filter")
 async def filter_device_history(
     company: Optional[str] = None,
@@ -1342,7 +1274,6 @@ async def filter_device_history(
     total = db.tickets.count_documents(q)
     tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(per_page))
     return {"items": _enrich_history_rows(tickets), "total": total, "page": page, "per_page": per_page}
-
 
 @api.get("/device-history/export")
 async def export_device_history_v2(
@@ -1428,7 +1359,6 @@ async def export_device_history_v2(
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
-
 @api.delete("/device-history/{ticket_id}")
 async def soft_delete_device_history(ticket_id: str, user=Depends(require_sub_admin)):
     """Soft-delete a device-history entry (ticket).
@@ -1468,7 +1398,6 @@ async def soft_delete_device_history(ticket_id: str, user=Depends(require_sub_ad
     )
     return {"ok": True, "ticket_id": ticket["id"], "is_deleted": True}
 
-
 @api.post("/device-history/{ticket_id}/restore")
 async def restore_device_history(ticket_id: str, user=Depends(require_sub_admin)):
     """Restore a soft-deleted device-history entry."""
@@ -1488,7 +1417,6 @@ async def restore_device_history(ticket_id: str, user=Depends(require_sub_admin)
     )
     return {"ok": True, "ticket_id": ticket["id"], "is_deleted": False}
 
-
 @api.get("/devices/{device_id}")
 async def get_device(device_id: str, user=Depends(get_current_user)):
     device = db.devices.find_one({"device_id": device_id}, {"_id": 0})
@@ -1504,7 +1432,6 @@ async def get_device(device_id: str, user=Depends(get_current_user)):
             )
             t["engineer_name"] = eng["name"] if eng else None
     return {"device": device, "history": tickets}
-
 
 # ---------- TICKETS ----------
 def _get_or_create_device(company: dict, d: DeviceCreate) -> dict:
@@ -1555,7 +1482,6 @@ def _get_or_create_device(company: dict, d: DeviceCreate) -> dict:
     doc.pop("_id", None)
     return doc
 
-
 def _log_status(ticket_id: str, actor: dict, old_status: Optional[str],
                 new_status: str, remarks: Optional[str] = None):
     db.ticket_status_logs.insert_one({
@@ -1569,7 +1495,6 @@ def _log_status(ticket_id: str, actor: dict, old_status: Optional[str],
         "remarks": remarks,
         "timestamp": now_iso(),
     })
-
 
 def _ticket_full(ticket: dict) -> dict:
     if not ticket:
@@ -1593,7 +1518,6 @@ def _ticket_full(ticket: dict) -> dict:
         if creator:
             ticket["created_by_user"] = creator
     return ticket
-
 
 @api.post("/tickets")
 async def create_ticket(payload: TicketCreate, admin=Depends(require_sub_admin)):
@@ -1651,7 +1575,6 @@ async def create_ticket(payload: TicketCreate, admin=Depends(require_sub_admin))
                 f"Ticket {ticket_no} created for {company['company_name']}")
     return _ticket_full(ticket)
 
-
 @api.get("/tickets")
 async def list_tickets(
     status: Optional[str] = None,
@@ -1692,7 +1615,6 @@ async def list_tickets(
 
     return tickets
 
-
 @api.get("/tickets/{ticket_id}")
 async def get_ticket(ticket_id: str, user=Depends(get_current_user)):
     ticket = db.tickets.find_one({"id": ticket_id}, {"_id": 0})
@@ -1726,7 +1648,6 @@ async def get_ticket(ticket_id: str, user=Depends(get_current_user)):
         ).sort("created_at", -1).limit(20))
         full["device_history"] = history
     return full
-
 
 @api.post("/tickets/{ticket_id}/assign")
 async def assign_ticket(ticket_id: str, payload: TicketAssign,
@@ -1785,7 +1706,6 @@ async def assign_ticket(ticket_id: str, payload: TicketAssign,
         })
     return _ticket_full(db.tickets.find_one({"id": ticket_id}, {"_id": 0}))
 
-
 @api.post("/tickets/{ticket_id}/outsource-complete")
 async def outsource_complete(ticket_id: str, admin=Depends(require_sub_admin)):
     """Mark an outsourced ticket as completed manually by admin/sub-admin."""
@@ -1802,7 +1722,6 @@ async def outsource_complete(ticket_id: str, admin=Depends(require_sub_admin)):
     _log_status(ticket_id, admin, ticket["status"], "closed",
                 "Outsource job marked complete manually")
     return _ticket_full(db.tickets.find_one({"id": ticket_id}, {"_id": 0}))
-
 
 @api.get("/tickets/{ticket_id}/outsource-pdf")
 async def outsource_internal_pdf(ticket_id: str, auth: Optional[str] = None,
@@ -1823,7 +1742,6 @@ async def outsource_internal_pdf(ticket_id: str, auth: Optional[str] = None,
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
-
 
 @api.post("/tickets/{ticket_id}/service-report")
 async def create_service_report(ticket_id: str, payload: ServiceReportCreate,
@@ -1886,7 +1804,6 @@ async def create_service_report(ticket_id: str, payload: ServiceReportCreate,
     }})
     return {"ok": True, "pdf_path": pdf_path}
 
-
 @api.post("/tickets/{ticket_id}/status")
 async def update_status(ticket_id: str, payload: StatusUpdate,
                         user=Depends(get_current_user)):
@@ -1946,7 +1863,6 @@ async def update_status(ticket_id: str, payload: StatusUpdate,
         })
     return _ticket_full(db.tickets.find_one({"id": ticket_id}, {"_id": 0}))
 
-
 @api.post("/tickets/{ticket_id}/location")
 async def update_location(ticket_id: str, payload: LocationUpdate,
                           user=Depends(require_engineer)):
@@ -1961,7 +1877,6 @@ async def update_location(ticket_id: str, payload: LocationUpdate,
         }}}
     )
     return {"ok": True}
-
 
 @api.post("/tickets/{ticket_id}/report")
 async def submit_report(ticket_id: str, payload: ReportSubmit,
@@ -2089,7 +2004,6 @@ async def submit_report(ticket_id: str, payload: ReportSubmit,
     report.pop("_id", None)
     return report
 
-
 @api.post("/tickets/{ticket_id}/approve")
 async def approve_ticket(ticket_id: str, admin=Depends(require_sub_admin)):
     ticket = db.tickets.find_one({"id": ticket_id})
@@ -2153,7 +2067,6 @@ async def approve_ticket(ticket_id: str, admin=Depends(require_sub_admin)):
 
     return _ticket_full(db.tickets.find_one({"id": ticket_id}, {"_id": 0}))
 
-
 @api.post("/tickets/{ticket_id}/notify-customer")
 async def notify_customer(ticket_id: str, user=Depends(require_sub_admin)):
     """Manually send a status notification email to the customer."""
@@ -2174,7 +2087,6 @@ async def notify_customer(ticket_id: str, user=Depends(require_sub_admin)):
     )
     return {"ok": True, "sent_to": client_email}
 
-
 # ---------- REPORTS ----------
 @api.get("/reports/{ticket_id}")
 async def get_report(ticket_id: str, user=Depends(get_current_user)):
@@ -2187,7 +2099,6 @@ async def get_report(ticket_id: str, user=Depends(get_current_user)):
     if not report:
         raise HTTPException(status_code=404, detail="No report for this ticket")
     return report
-
 
 # ---------- FILES (local storage server) ----------
 @api.get("/files/{path:path}")
@@ -2223,7 +2134,6 @@ async def serve_file(path: str, request: Request):
         "Content-Disposition": f'inline; filename="{filename}"'
     })
 
-
 # Back-compat endpoint
 @api.get("/tickets/{ticket_id}/pdf")
 async def get_ticket_pdf(ticket_id: str, request: Request):
@@ -2250,7 +2160,6 @@ async def get_ticket_pdf(ticket_id: str, request: Request):
         "Content-Disposition": f"inline; filename=\"{ticket['ticket_no']}.pdf\""
     })
 
-
 # ---------- NOTIFICATIONS ----------
 @api.get("/notifications")
 async def list_notifications(user=Depends(get_current_user)):
@@ -2263,14 +2172,12 @@ async def list_notifications(user=Depends(get_current_user)):
             n["read"] = n.get("read_status", False)
     return notes
 
-
 @api.post("/notifications/{nid}/read")
 async def mark_read(nid: str, user=Depends(get_current_user)):
     db.notifications.update_one(
         {"id": nid}, {"$set": {"read": True, "read_status": True}}
     )
     return {"ok": True}
-
 
 # ---------- ATTENDANCE ----------
 @api.post("/attendance/check-in")
@@ -2300,7 +2207,6 @@ async def check_in(payload: AttendanceAction, user=Depends(require_engineer)):
     doc.pop("_id", None)
     return doc
 
-
 @api.post("/attendance/check-out")
 async def check_out(payload: AttendanceAction, user=Depends(require_engineer)):
     today = date.today().isoformat()
@@ -2322,7 +2228,6 @@ async def check_out(payload: AttendanceAction, user=Depends(require_engineer)):
     doc["check_out"] = doc.get("check_out_time")
     return doc
 
-
 @api.get("/attendance/today")
 async def attendance_today(user=Depends(require_engineer)):
     today = date.today().isoformat()
@@ -2333,7 +2238,6 @@ async def attendance_today(user=Depends(require_engineer)):
         doc["check_out"] = doc.get("check_out_time")
     return doc or {}
 
-
 @api.get("/attendance/history")
 async def attendance_history(user=Depends(require_engineer)):
     docs = list(db.attendance.find(
@@ -2343,7 +2247,6 @@ async def attendance_history(user=Depends(require_engineer)):
         d["check_in"] = d.get("check_in_time")
         d["check_out"] = d.get("check_out_time")
     return docs
-
 
 # ---------- DASHBOARD ----------
 @api.get("/dashboard/admin", dependencies=[Depends(require_sub_admin)])
@@ -2487,7 +2390,6 @@ async def admin_dashboard(user=Depends(get_current_user)):
         print("DASHBOARD ERROR:", str(e))
         raise HTTPException(status_code=500, detail="Dashboard error")
 
-
 @api.get("/dashboard/engineer")
 async def engineer_dashboard(user=Depends(require_engineer)):
     eid = user["id"]
@@ -2511,7 +2413,6 @@ async def engineer_dashboard(user=Depends(require_engineer)):
         "resolved": resolved,
         "completed": completed,
     }
-
 
 # ---------- ANALYTICS ----------
 @api.get("/analytics", dependencies=[Depends(require_sub_admin)])
@@ -2705,7 +2606,6 @@ async def analytics(user=Depends(get_current_user)):
         },
     }
 
-
 @api.get("/live-locations")
 async def live_locations(user=Depends(require_sub_admin)):
     q = {
@@ -2731,7 +2631,6 @@ async def live_locations(user=Depends(require_sub_admin)):
             "customer_name": t.get("customer_name"),
         })
     return out
-
 
 app.include_router(api)
 app.add_middleware(

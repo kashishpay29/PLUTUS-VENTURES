@@ -1,7 +1,3 @@
-"""
-Run from backend folder with venv activated:
-  python add_subadmins.py
-"""
 import os, uuid, bcrypt
 from datetime import datetime, timezone
 from pymongo import MongoClient

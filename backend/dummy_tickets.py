@@ -1,13 +1,3 @@
-"""
-Creates dummy tickets for testing analytics/customer features.
-All dummy tickets are tagged with is_dummy=True for easy removal.
-
-Run from backend folder with venv activated:
-  python dummy_tickets.py
-
-To remove all dummy tickets after testing:
-  python dummy_tickets.py --remove
-"""
 import os, sys, uuid
 from datetime import datetime, timezone, timedelta
 from pymongo import MongoClient

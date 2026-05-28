@@ -1,7 +1,3 @@
-"""
-Run this from inside the backend folder with venv activated:
-  python add_companies.py
-"""
 import os, uuid
 from datetime import datetime, timezone
 from pymongo import MongoClient
