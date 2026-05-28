@@ -504,6 +504,7 @@ async def startup():
     db.companies.create_index("company_name", unique=True)
     db.companies.create_index("company_code", unique=True)
     db.companies.create_index("status")
+    db.companies.create_index([("company_name", "text"), ("company_code", "text"), ("contact_person", "text"), ("city", "text")])
     db.tickets.create_index("ticket_no", unique=True, sparse=True)
     db.tickets.create_index("status")
     db.tickets.create_index("assigned_engineer_id")
@@ -523,6 +524,7 @@ async def startup():
     db.devices.create_index("brand")
     db.devices.create_index("model")
     db.devices.create_index("device_name")
+    db.devices.create_index([("serial_number", "text"), ("device_id", "text"), ("brand", "text"), ("model", "text"), ("device_name", "text")])
     db.ticket_status_logs.create_index("ticket_id")
     db.ticket_status_logs.create_index([("timestamp", -1)])
     db.ticket_status_logs.create_index([("ticket_id", 1), ("timestamp", -1)])
@@ -963,17 +965,29 @@ async def list_companies(
     if status:
         query["status"] = status
     if q:
-        query["$or"] = [
-            {"company_name": {"$regex": q, "$options": "i"}},
-            {"company_code": {"$regex": q, "$options": "i"}},
-            {"contact_person": {"$regex": q, "$options": "i"}},
-            {"gst_number": {"$regex": q, "$options": "i"}},
-            {"city": {"$regex": q, "$options": "i"}},
-        ]
-    total = db.companies.count_documents(query)
+        query["$text"] = {"$search": q}
+
     skip = max(0, (page - 1)) * page_size
-    items = list(db.companies.find(query, {"_id": 0})
-                 .sort("created_at", -1).skip(skip).limit(page_size))
+
+    # Single aggregation instead of 2 separate queries
+    pipeline = [
+        {"$match": query},
+        {
+            "$facet": {
+                "count": [{"$count": "total"}],
+                "items": [{"$sort": {"created_at": -1}}, {"$skip": skip}, {"$limit": page_size}]
+            }
+        }
+    ]
+    result = list(db.companies.aggregate(pipeline))
+    if result:
+        r = result[0]
+        total = r["count"][0]["total"] if r["count"] else 0
+        items = r["items"]
+    else:
+        total = 0
+        items = []
+
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 @api.get("/companies/{company_id}")
@@ -1072,17 +1086,30 @@ async def list_devices(q: Optional[str] = None,
     if company_id:
         query["company_id"] = company_id
     if q:
-        query["$or"] = [
-            {"serial_number": {"$regex": q, "$options": "i"}},
-            {"device_id": {"$regex": q, "$options": "i"}},
-            {"brand": {"$regex": q, "$options": "i"}},
-            {"model": {"$regex": q, "$options": "i"}},
-            {"device_name": {"$regex": q, "$options": "i"}},
-        ]
+        query["$text"] = {"$search": q}
+
     skip = (page - 1) * per_page
-    total = db.devices.count_documents(query)
-    devices = list(db.devices.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(per_page))
-    return {"items": devices, "total": total, "page": page, "per_page": per_page}
+
+    # Single aggregation instead of 2 separate queries
+    pipeline = [
+        {"$match": query},
+        {
+            "$facet": {
+                "count": [{"$count": "total"}],
+                "items": [{"$sort": {"created_at": -1}}, {"$skip": skip}, {"$limit": per_page}]
+            }
+        }
+    ]
+    result = list(db.devices.aggregate(pipeline))
+    if result:
+        r = result[0]
+        total = r["count"][0]["total"] if r["count"] else 0
+        items = r["items"]
+    else:
+        total = 0
+        items = []
+
+    return {"items": items, "total": total, "page": page, "per_page": per_page}
 
 @api.get("/devices/history-export")
 async def export_device_history(
@@ -1245,9 +1272,27 @@ async def list_device_history(
         q["$or"] = scope
 
     skip = (page - 1) * per_page
-    total = db.tickets.count_documents(q)
-    tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(per_page))
-    return {"items": _enrich_history_rows(tickets), "total": total, "page": page, "per_page": per_page}
+
+    # Single aggregation instead of 2 separate queries
+    pipeline = [
+        {"$match": q},
+        {
+            "$facet": {
+                "count": [{"$count": "total"}],
+                "items": [{"$sort": {"created_at": -1}}, {"$skip": skip}, {"$limit": per_page}]
+            }
+        }
+    ]
+    result = list(db.tickets.aggregate(pipeline))
+    if result:
+        r = result[0]
+        total = r["count"][0]["total"] if r["count"] else 0
+        items = r["items"]
+    else:
+        total = 0
+        items = []
+
+    return {"items": _enrich_history_rows(items), "total": total, "page": page, "per_page": per_page}
 
 @api.get("/device-history/filter")
 async def filter_device_history(
@@ -1272,9 +1317,27 @@ async def filter_device_history(
         q["$or"] = scope
 
     skip = (page - 1) * per_page
-    total = db.tickets.count_documents(q)
-    tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(per_page))
-    return {"items": _enrich_history_rows(tickets), "total": total, "page": page, "per_page": per_page}
+
+    # Single aggregation instead of 2 separate queries
+    pipeline = [
+        {"$match": q},
+        {
+            "$facet": {
+                "count": [{"$count": "total"}],
+                "items": [{"$sort": {"created_at": -1}}, {"$skip": skip}, {"$limit": per_page}]
+            }
+        }
+    ]
+    result = list(db.tickets.aggregate(pipeline))
+    if result:
+        r = result[0]
+        total = r["count"][0]["total"] if r["count"] else 0
+        items = r["items"]
+    else:
+        total = 0
+        items = []
+
+    return {"items": _enrich_history_rows(items), "total": total, "page": page, "per_page": per_page}
 
 @api.get("/device-history/export")
 async def export_device_history_v2(
@@ -1581,6 +1644,8 @@ async def list_tickets(
     status: Optional[str] = None,
     company_id: Optional[str] = None,
     mine: bool = False,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=500),
     user=Depends(get_current_user),
 ):
     q: Dict[str, Any] = {"is_deleted": {"$ne": True}}
@@ -1593,7 +1658,26 @@ async def list_tickets(
     if user["role"] == "sub_admin":
         q.update(_sub_admin_ticket_scope(user))
 
-    tickets = list(db.tickets.find(q, {"_id": 0}).sort("created_at", -1).limit(500))
+    skip = (page - 1) * per_page
+
+    # Single aggregation instead of 2 separate queries
+    pipeline = [
+        {"$match": q},
+        {
+            "$facet": {
+                "count": [{"$count": "total"}],
+                "items": [{"$sort": {"created_at": -1}}, {"$skip": skip}, {"$limit": per_page}]
+            }
+        }
+    ]
+    result = list(db.tickets.aggregate(pipeline))
+    if result:
+        r = result[0]
+        total = r["count"][0]["total"] if r["count"] else 0
+        tickets = r["items"]
+    else:
+        total = 0
+        tickets = []
 
     device_ids = list({t.get("device_id") for t in tickets if t.get("device_id")})
     eng_ids = list({t.get("assigned_engineer_id") for t in tickets if t.get("assigned_engineer_id")})
@@ -1614,7 +1698,7 @@ async def list_tickets(
         if t.get("assigned_engineer_id"):
             t["engineer"] = engineers_map.get(t["assigned_engineer_id"])
 
-    return tickets
+    return {"items": tickets, "total": total, "page": page, "per_page": per_page}
 
 @api.get("/tickets/{ticket_id}")
 async def get_ticket(ticket_id: str, user=Depends(get_current_user)):
