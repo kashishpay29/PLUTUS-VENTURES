@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
 import { api } from "../../lib/api";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -12,6 +11,17 @@ const COLUMNS = [
   "open", "assigned", "accepted", "travelling",
   "reached_site", "in_progress", "resolved",
   "completed_with_signature", "report_generated", "closed",
+];
+
+const STATUS_FILTERS = [
+  { value: "all",         label: "All" },
+  { value: "open",        label: "Open" },
+  { value: "assigned",    label: "Assigned" },
+  { value: "accepted",    label: "Accepted" },
+  { value: "travelling",  label: "Travelling" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "resolved",    label: "Resolved" },
+  { value: "closed",      label: "Closed" },
 ];
 
 export default function TicketBoard() {
@@ -33,30 +43,37 @@ export default function TicketBoard() {
     return () => clearInterval(t);
   }, []);
 
-  const STATUS_FILTERS = [
-    { value: "all",         label: "All" },
-    { value: "open",        label: "Open" },
-    { value: "assigned",    label: "Assigned" },
-    { value: "accepted",    label: "Accepted" },
-    { value: "travelling",  label: "Travelling" },
-    { value: "in_progress", label: "In Progress" },
-    { value: "resolved",    label: "Resolved" },
-    { value: "closed",      label: "Closed" },
-  ];
+  const statusCounts = useMemo(() => {
+    return tickets.reduce((acc, ticket) => {
+      acc[ticket.status] = (acc[ticket.status] || 0) + 1;
+      return acc;
+    }, {});
+  }, [tickets]);
 
-  const filtered = tickets.filter((t) => {
-    if (statusFilter !== "all" && t.status !== statusFilter) return false;
-    if (!q) return true;
-    const s = q.toLowerCase();
-    return (
-      t.ticket_number?.toLowerCase().includes(s) ||
-      t.customer_name?.toLowerCase().includes(s) ||
-      t.device?.device_id?.toLowerCase().includes(s) ||
-      t.engineer?.name?.toLowerCase().includes(s) ||
-      t.customer_company?.toLowerCase().includes(s) ||
-      t.company?.name?.toLowerCase().includes(s)
-    );
-  });
+  const filtered = useMemo(() => {
+    const search = q.trim().toLowerCase();
+    return tickets.filter((ticket) => {
+      if (statusFilter !== "all" && ticket.status !== statusFilter) return false;
+      if (!search) return true;
+
+      return [
+        ticket.ticket_number,
+        ticket.customer_name,
+        ticket.device?.device_id,
+        ticket.engineer?.name,
+        ticket.customer_company,
+        ticket.company?.name,
+      ].some((value) => value?.toLowerCase().includes(search));
+    });
+  }, [q, statusFilter, tickets]);
+
+  const ticketsByColumn = useMemo(() => {
+    const grouped = Object.fromEntries(COLUMNS.map((col) => [col, []]));
+    filtered.forEach((ticket) => {
+      if (grouped[ticket.status]) grouped[ticket.status].push(ticket);
+    });
+    return grouped;
+  }, [filtered]);
 
   return (
     <div className="space-y-6" data-testid="admin-tickets-page">
@@ -116,7 +133,7 @@ export default function TicketBoard() {
             {f.label}
             {f.value !== "all" && (
               <span className="ml-1.5 opacity-60">
-                {tickets.filter(t => t.status === f.value).length}
+                {statusCounts[f.value] || 0}
               </span>
             )}
           </button>
@@ -133,7 +150,7 @@ export default function TicketBoard() {
         <div className="overflow-x-auto kanban-scroll -mx-4 px-4 pb-2" data-testid="ticket-kanban-board">
           <div className="flex gap-4 min-w-max">
             {COLUMNS.map((col) => {
-              const items = filtered.filter((t) => t.status === col);
+              const items = ticketsByColumn[col];
               return (
                 <div key={col} className="kanban-col w-80 flex-shrink-0">
                   <div className={`mb-3 flex items-center justify-between border-l-4 pl-2 border-status-${col}`}>
@@ -143,13 +160,9 @@ export default function TicketBoard() {
                     <span className="font-mono font-bold text-sm text-slate-500">{items.length}</span>
                   </div>
                   <div className="space-y-3 min-h-[200px]">
-                    {items.map((t, idx) => (
-                      <motion.div
+                    {items.map((t) => (
+                      <div
                         key={t.id}
-                        layout
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: idx * 0.02 }}
                       >
                         <Link to={`/admin/tickets/${t.id}`}>
                           <Card className={`p-4 hover-lift rounded-md border-l-4 border-status-${t.status}`}
@@ -186,7 +199,7 @@ export default function TicketBoard() {
                             </div>
                           </Card>
                         </Link>
-                      </motion.div>
+                      </div>
                     ))}
                     {items.length === 0 && (
                       <div className="text-center py-8 text-xs text-slate-400 border-2 border-dashed border-slate-200 rounded-md">

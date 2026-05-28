@@ -1,42 +1,46 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, useAuth } from "@/lib/auth";
 
-import Login from "@/pages/Login";
+const Login = lazy(() => import("@/pages/Login"));
 
-import AdminLayout from "@/pages/admin/AdminLayout";
-import AdminDashboard from "@/pages/admin/AdminDashboard";
-import TicketBoard from "@/pages/admin/TicketBoard";
-import TicketCreate from "@/pages/admin/TicketCreate";
-import TicketDetail from "@/pages/admin/TicketDetail";
-import EngineersPage from "@/pages/admin/EngineersPage";
-import DevicesPage from "@/pages/admin/DevicesPage";
-import LivePage from "@/pages/admin/LivePage";
-import AnalyticsPage from "@/pages/admin/AnalyticsPage";
-import CompaniesPage from "@/pages/admin/CompaniesPage";
-import CompanyNew from "@/pages/admin/CompanyNew";
-import CompanyDetail from "@/pages/admin/CompanyDetail";
-import DeviceHistoryPage from "@/pages/admin/DeviceHistoryPage";
-import SubAdminsPage from "@/pages/admin/SubAdminsPage";
-import SubAdminAnalyticsPage from "@/pages/admin/SubAdminAnalyticsPage";
+const AdminLayout = lazy(() => import("@/pages/admin/AdminLayout"));
+const AdminDashboard = lazy(() => import("@/pages/admin/AdminDashboard"));
+const TicketBoard = lazy(() => import("@/pages/admin/TicketBoard"));
+const TicketCreate = lazy(() => import("@/pages/admin/TicketCreate"));
+const TicketDetail = lazy(() => import("@/pages/admin/TicketDetail"));
+const EngineersPage = lazy(() => import("@/pages/admin/EngineersPage"));
+const DevicesPage = lazy(() => import("@/pages/admin/DevicesPage"));
+const LivePage = lazy(() => import("@/pages/admin/LivePage"));
+const AnalyticsPage = lazy(() => import("@/pages/admin/AnalyticsPage"));
+const CompaniesPage = lazy(() => import("@/pages/admin/CompaniesPage"));
+const CompanyNew = lazy(() => import("@/pages/admin/CompanyNew"));
+const CompanyDetail = lazy(() => import("@/pages/admin/CompanyDetail"));
+const DeviceHistoryPage = lazy(() => import("@/pages/admin/DeviceHistoryPage"));
+const SubAdminsPage = lazy(() => import("@/pages/admin/SubAdminsPage"));
+const SubAdminAnalyticsPage = lazy(() => import("@/pages/admin/SubAdminAnalyticsPage"));
 
-import EngineerLayout from "@/pages/engineer/EngineerLayout";
-import EngineerHome from "@/pages/engineer/EngineerHome";
-import EngineerTickets from "@/pages/engineer/EngineerTickets";
-import EngineerTicketDetail from "@/pages/engineer/EngineerTicketDetail";
-import EngineerAttendance from "@/pages/engineer/EngineerAttendance";
-import EngineerProfile from "@/pages/engineer/EngineerProfile";
+const EngineerLayout = lazy(() => import("@/pages/engineer/EngineerLayout"));
+const EngineerHome = lazy(() => import("@/pages/engineer/EngineerHome"));
+const EngineerTickets = lazy(() => import("@/pages/engineer/EngineerTickets"));
+const EngineerTicketDetail = lazy(() => import("@/pages/engineer/EngineerTicketDetail"));
+const EngineerAttendance = lazy(() => import("@/pages/engineer/EngineerAttendance"));
+const EngineerProfile = lazy(() => import("@/pages/engineer/EngineerProfile"));
+
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen grid place-items-center bg-white">
+      <div className="text-sm text-slate-500">Loading...</div>
+    </div>
+  );
+}
 
 function Protected({ role, children }) {
   const { user } = useAuth();
   if (user === null) {
-    return (
-      <div className="min-h-screen grid place-items-center bg-white">
-        <div className="text-sm text-slate-500">Loading…</div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
   if (user === false) return <Navigate to="/login" replace />;
   if (role === "admin" && !["admin", "sub_admin"].includes(user.role)) {
@@ -51,14 +55,10 @@ function Protected({ role, children }) {
 function RootRedirect() {
   const { user } = useAuth();
   if (user === null) {
-    return (
-      <div className="min-h-screen grid place-items-center bg-white">
-        <div className="text-sm text-slate-500">Loading…</div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
   if (user === false) return <Navigate to="/login" replace />;
-  return <Navigate to={user.role === "admin" ? "/admin" : "/engineer"} replace />;
+  return <Navigate to={["admin", "sub_admin"].includes(user.role) ? "/admin" : "/engineer"} replace />;
 }
 
 function App() {
@@ -67,37 +67,39 @@ function App() {
       <AuthProvider>
         <BrowserRouter>
           <Toaster richColors position="top-right" />
-          <Routes>
-            <Route path="/login" element={<Login />} />
+          <Suspense fallback={<LoadingScreen />}>
+            <Routes>
+              <Route path="/login" element={<Login />} />
 
-            <Route path="/admin" element={<Protected role="admin"><AdminLayout /></Protected>}>
-              <Route index element={<AdminDashboard />} />
-              <Route path="tickets" element={<TicketBoard />} />
-              <Route path="tickets/new" element={<TicketCreate />} />
-              <Route path="tickets/:id" element={<TicketDetail />} />
-              <Route path="companies" element={<CompaniesPage />} />
-              <Route path="companies/new" element={<CompanyNew />} />
-              <Route path="companies/:id" element={<CompanyDetail />} />
-              <Route path="engineers" element={<EngineersPage />} />
-              <Route path="devices" element={<DevicesPage />} />
-              <Route path="device-history" element={<DeviceHistoryPage />} />
-              <Route path="live" element={<LivePage />} />
-              <Route path="analytics" element={<AnalyticsPage />} />
-              <Route path="sub-admins" element={<SubAdminsPage />} />
-              <Route path="sub-admins/:id/analytics" element={<SubAdminAnalyticsPage />} />
-            </Route>
+              <Route path="/admin" element={<Protected role="admin"><AdminLayout /></Protected>}>
+                <Route index element={<AdminDashboard />} />
+                <Route path="tickets" element={<TicketBoard />} />
+                <Route path="tickets/new" element={<TicketCreate />} />
+                <Route path="tickets/:id" element={<TicketDetail />} />
+                <Route path="companies" element={<CompaniesPage />} />
+                <Route path="companies/new" element={<CompanyNew />} />
+                <Route path="companies/:id" element={<CompanyDetail />} />
+                <Route path="engineers" element={<EngineersPage />} />
+                <Route path="devices" element={<DevicesPage />} />
+                <Route path="device-history" element={<DeviceHistoryPage />} />
+                <Route path="live" element={<LivePage />} />
+                <Route path="analytics" element={<AnalyticsPage />} />
+                <Route path="sub-admins" element={<SubAdminsPage />} />
+                <Route path="sub-admins/:id/analytics" element={<SubAdminAnalyticsPage />} />
+              </Route>
 
-            <Route path="/engineer" element={<Protected role="engineer"><EngineerLayout /></Protected>}>
-              <Route index element={<EngineerHome />} />
-              <Route path="tickets" element={<EngineerTickets />} />
-              <Route path="tickets/:id" element={<EngineerTicketDetail />} />
-              <Route path="attendance" element={<EngineerAttendance />} />
-              <Route path="profile" element={<EngineerProfile />} />
-            </Route>
+              <Route path="/engineer" element={<Protected role="engineer"><EngineerLayout /></Protected>}>
+                <Route index element={<EngineerHome />} />
+                <Route path="tickets" element={<EngineerTickets />} />
+                <Route path="tickets/:id" element={<EngineerTicketDetail />} />
+                <Route path="attendance" element={<EngineerAttendance />} />
+                <Route path="profile" element={<EngineerProfile />} />
+              </Route>
 
-            <Route path="/" element={<RootRedirect />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+              <Route path="/" element={<RootRedirect />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </BrowserRouter>
       </AuthProvider>
     </div>
