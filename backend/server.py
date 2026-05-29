@@ -910,6 +910,7 @@ class SubAdminCreate(BaseModel):
     employee_id: Optional[str] = None
     designation: Optional[str] = None
     address: Optional[str] = None
+    assigned_company_ids: List[str] = []
 
 class SubAdminUpdate(BaseModel):
     name: Optional[str] = None
@@ -919,9 +920,7 @@ class SubAdminUpdate(BaseModel):
     employee_id: Optional[str] = None
     designation: Optional[str] = None
     address: Optional[str] = None
-    # NOTE: assigned_company_ids is intentionally excluded here.
-    # Only the sub-admin themselves can manage their own company assignments
-    # via PATCH /sub-admins/me/companies
+    assigned_company_ids: Optional[List[str]] = None
 
 class SubAdminSelfCompaniesUpdate(BaseModel):
     assigned_company_ids: List[str] = []
@@ -955,7 +954,7 @@ async def create_sub_admin(payload: SubAdminCreate):
         "password_hash": hash_password(payload.password),
         "is_active": True,
         "status": "active",
-        "assigned_company_ids": [],
+        "assigned_company_ids": payload.assigned_company_ids or [],
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
