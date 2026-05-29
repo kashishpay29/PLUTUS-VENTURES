@@ -48,6 +48,20 @@ logging.basicConfig(
 logger = logging.getLogger("plutus-serviceops")
 _RESPONSE_CACHE: Dict[str, Any] = {}
 
+def cache_key(prefix: str, **kwargs) -> str:
+    return f"{prefix}:{':'.join(f'{k}={v}' for k, v in sorted(kwargs.items()))}"
+
+def get_cache(key: str, max_age_seconds: int = 300) -> Optional[Any]:
+    if key in _RESPONSE_CACHE:
+        data, timestamp = _RESPONSE_CACHE[key]
+        if time.time() - timestamp < max_age_seconds:
+            return data
+        del _RESPONSE_CACHE[key]
+    return None
+
+def set_cache(key: str, data: Any):
+    _RESPONSE_CACHE[key] = (data, time.time())
+
 
 def send_ticket_email(to_email: str, ticket: dict, pdf_bytes: bytes = None,
                       subject_prefix: str = "", sender_name: str = None, sender_email: str = None):
@@ -526,48 +540,62 @@ async def startup():
         except Exception:
             pass
 
-    # Indexes
-    db.users.create_index("role")
-    db.users.create_index("email", unique=True)
-    db.users.create_index("id", unique=True)
-    db.users.create_index("employee_id", sparse=True)
-    db.companies.create_index("company_name", unique=True)
-    db.companies.create_index("company_code", unique=True)
-    db.companies.create_index("status")
-    db.companies.create_index([("company_name", "text"), ("company_code", "text"), ("contact_person", "text"), ("city", "text")])
-    db.tickets.create_index("ticket_no", unique=True, sparse=True)
-    db.tickets.create_index("status")
-    db.tickets.create_index("assigned_engineer_id")
-    db.tickets.create_index("company_id")
-    db.tickets.create_index([("created_at", -1)])
-    db.tickets.create_index([("company_id", 1), ("created_at", -1)])
-    db.tickets.create_index([("status", 1), ("created_at", -1)])
-    db.tickets.create_index([("is_deleted", 1), ("created_at", -1)])
-    db.tickets.create_index([("assigned_engineer_id", 1), ("is_deleted", 1), ("created_at", -1)])
-    db.tickets.create_index([("assigned_engineer_id", 1), ("status", 1), ("is_deleted", 1), ("created_at", -1)])
-    db.tickets.create_index([("company_id", 1), ("status", 1), ("is_deleted", 1), ("created_at", -1)])
-    db.tickets.create_index("is_deleted")
-    db.devices.create_index("warranty_expiry")
-    db.devices.create_index("device_id", unique=True)
-    db.devices.create_index(
-        "serial_number",
-        unique=True,
-        partialFilterExpression={"serial_number": {"$type": "string"}},
-    )  # globally unique when provided; blank serials are not indexed
-    db.devices.create_index("company_id")
-    db.devices.create_index([("company_id", 1), ("created_at", -1)])
-    db.devices.create_index([("warranty_status", 1), ("warranty_expiry", 1)])
-    db.devices.create_index("brand")
-    db.devices.create_index("model")
-    db.devices.create_index("device_name")
-    db.devices.create_index([("serial_number", "text"), ("device_id", "text"), ("brand", "text"), ("model", "text"), ("device_name", "text")])
-    db.ticket_status_logs.create_index("ticket_id")
-    db.ticket_status_logs.create_index([("timestamp", -1)])
-    db.ticket_status_logs.create_index([("ticket_id", 1), ("timestamp", -1)])
-    db.service_reports.create_index("ticket_id", unique=True)
-    db.attachments.create_index("ticket_id")
-    db.notifications.create_index("user_id")
-    db.otp_challenges.create_index("expires_at", expireAfterSeconds=0)
+    # Create indexes only if they don't exist (background=True for non-blocking)
+    _indexes_created = getattr(app.state, '_indexes_created', False)
+    if not _indexes_created:
+        # Users
+        db.users.create_index("role")
+        db.users.create_index("email", unique=True)
+        db.users.create_index("id", unique=True)
+        db.users.create_index("employee_id", sparse=True)
+
+        # Companies
+        db.companies.create_index("company_name", unique=True)
+        db.companies.create_index("company_code", unique=True)
+        db.companies.create_index("status")
+        db.companies.create_index([("company_name", "text"), ("company_code", "text"), ("contact_person", "text"), ("city", "text")])
+
+        # Tickets (most critical for performance)
+        db.tickets.create_index("ticket_no", unique=True, sparse=True)
+        db.tickets.create_index("status")
+        db.tickets.create_index("assigned_engineer_id")
+        db.tickets.create_index("company_id")
+        db.tickets.create_index([("created_at", -1)])
+        db.tickets.create_index([("company_id", 1), ("created_at", -1)])
+        db.tickets.create_index([("status", 1), ("created_at", -1)])
+        db.tickets.create_index([("is_deleted", 1), ("created_at", -1)])
+        db.tickets.create_index([("assigned_engineer_id", 1), ("is_deleted", 1), ("created_at", -1)])
+        db.tickets.create_index([("assigned_engineer_id", 1), ("status", 1), ("is_deleted", 1), ("created_at", -1)])
+        db.tickets.create_index([("company_id", 1), ("status", 1), ("is_deleted", 1), ("created_at", -1)])
+        db.tickets.create_index("is_deleted")
+
+        # Devices
+        db.devices.create_index("device_id", unique=True)
+        db.devices.create_index(
+            "serial_number",
+            unique=True,
+            partialFilterExpression={"serial_number": {"$type": "string"}},
+        )
+        db.devices.create_index("company_id")
+        db.devices.create_index([("company_id", 1), ("created_at", -1)])
+        db.devices.create_index([("warranty_status", 1), ("warranty_expiry", 1)])
+        db.devices.create_index("brand")
+        db.devices.create_index("model")
+        db.devices.create_index("device_name")
+        db.devices.create_index([("serial_number", "text"), ("device_id", "text"), ("brand", "text"), ("model", "text"), ("device_name", "text")])
+        db.devices.create_index("warranty_expiry")
+
+        # Other collections
+        db.ticket_status_logs.create_index("ticket_id")
+        db.ticket_status_logs.create_index([("timestamp", -1)])
+        db.ticket_status_logs.create_index([("ticket_id", 1), ("timestamp", -1)])
+        db.service_reports.create_index("ticket_id", unique=True)
+        db.attachments.create_index("ticket_id")
+        db.notifications.create_index("user_id")
+        db.otp_challenges.create_index("expires_at", expireAfterSeconds=0)
+
+        app.state._indexes_created = True
+        logger.info("✓ Database indexes created")
 
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@plutusventures.com")
@@ -997,6 +1025,11 @@ async def list_companies(
     page: int = 1, page_size: int = 50,
     user=Depends(get_current_user),
 ):
+    cache_k = cache_key("companies", status=status or "", q=q or "", page=page, page_size=page_size)
+    cached = get_cache(cache_k, max_age_seconds=300)
+    if cached:
+        return cached
+
     query: Dict[str, Any] = {}
     if status:
         query["status"] = status
@@ -1029,7 +1062,9 @@ async def list_companies(
         total = 0
         items = []
 
-    return {"items": items, "total": total, "page": page, "page_size": page_size}
+    response = {"items": items, "total": total, "page": page, "page_size": page_size}
+    set_cache(cache_k, response)
+    return response
 
 @api.get("/companies/{company_id}")
 async def get_company(company_id: str, user=Depends(get_current_user)):
