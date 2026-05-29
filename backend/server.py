@@ -204,7 +204,16 @@ import ssl
 
 client = MongoClient(
     mongo_url,
-    tlsAllowInvalidCertificates=True
+    tlsAllowInvalidCertificates=True,
+    maxPoolSize=50,
+    minPoolSize=10,
+    socketTimeoutMS=10000,
+    connectTimeoutMS=10000,
+    serverSelectionTimeoutMS=5000,
+    maxIdleTimeMS=45000,
+    waitQueueTimeoutMS=10000,
+    retryWrites=True,
+    maxStalenessSeconds=5
 )
 
 db = client[os.environ["DB_NAME"]]
