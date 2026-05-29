@@ -212,8 +212,7 @@ client = MongoClient(
     serverSelectionTimeoutMS=5000,
     maxIdleTimeMS=45000,
     waitQueueTimeoutMS=10000,
-    retryWrites=True,
-    maxStalenessSeconds=5
+    retryWrites=True
 )
 
 db = client[os.environ["DB_NAME"]]
