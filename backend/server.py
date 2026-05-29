@@ -358,7 +358,6 @@ class EngineerCreate(BaseModel):
     email: EmailStr
     phone: Optional[str] = None
     password: str
-    skills: List[str] = []
     employee_id: Optional[str] = None
     designation: Optional[str] = None
     address: Optional[str] = None
@@ -368,7 +367,6 @@ class EngineerCreate(BaseModel):
 class EngineerUpdate(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
-    skills: Optional[List[str]] = None
     is_active: Optional[bool] = None
     is_available: Optional[bool] = None
     password: Optional[str] = None
@@ -849,7 +847,7 @@ async def create_engineer(payload: EngineerCreate):
         "name": payload.name,
         "role": "engineer",
         "phone": payload.phone,
-        "skills": payload.skills,
+        "skills": [],
         "employee_id": payload.employee_id,
         "designation": payload.designation,
         "address": payload.address,
