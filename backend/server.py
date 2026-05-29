@@ -1670,23 +1670,35 @@ def _ticket_full(ticket: dict) -> dict:
     if not ticket:
         return ticket
     ticket = clean(ticket)
-    if ticket.get("device_id"):
-        device = db.devices.find_one({"device_id": ticket["device_id"]},
-                                     {"_id": 0})
-        ticket["device"] = device
-    if ticket.get("company_id"):
-        company = db.companies.find_one({"id": ticket["company_id"]},
-                                        {"_id": 0})
-        ticket["company"] = company
+
+    device_ids = [ticket.get("device_id")] if ticket.get("device_id") else []
+    company_ids = [ticket.get("company_id")] if ticket.get("company_id") else []
+    user_ids = []
     if ticket.get("assigned_engineer_id"):
-        eng = db.users.find_one({"id": ticket["assigned_engineer_id"]},
-                                {"_id": 0, "password_hash": 0})
-        ticket["engineer"] = eng
+        user_ids.append(ticket["assigned_engineer_id"])
     if ticket.get("created_by"):
-        creator = db.users.find_one({"id": ticket["created_by"]},
-                                    {"_id": 0, "id": 1, "name": 1, "role": 1, "email": 1})
-        if creator:
-            ticket["created_by_user"] = creator
+        user_ids.append(ticket["created_by"])
+
+    if device_ids:
+        devices = list(db.devices.find({"device_id": {"$in": device_ids}}, {"_id": 0}))
+        if devices:
+            ticket["device"] = devices[0]
+
+    if company_ids:
+        companies = list(db.companies.find({"id": {"$in": company_ids}}, {"_id": 0}))
+        if companies:
+            ticket["company"] = companies[0]
+
+    if user_ids:
+        users = {u["id"]: u for u in db.users.find(
+            {"id": {"$in": user_ids}},
+            {"_id": 0, "password_hash": 0}
+        )}
+        if ticket.get("assigned_engineer_id") in users:
+            ticket["engineer"] = users[ticket["assigned_engineer_id"]]
+        if ticket.get("created_by") in users:
+            ticket["created_by_user"] = users[ticket["created_by"]]
+
     return ticket
 
 @api.post("/tickets")
