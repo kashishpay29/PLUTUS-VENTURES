@@ -47,6 +47,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("plutus-serviceops")
 _RESPONSE_CACHE: Dict[str, Any] = {}
+MAX_CACHE_SIZE = 500
+
+def _cache_eviction_time(key: str) -> float:
+    item = _RESPONSE_CACHE[key]
+    if isinstance(item, tuple):
+        for value in item:
+            if isinstance(value, (int, float)):
+                return float(value)
+    return 0
 
 def cache_key(prefix: str, **kwargs) -> str:
     return f"{prefix}:{':'.join(f'{k}={v}' for k, v in sorted(kwargs.items()))}"
@@ -60,6 +69,9 @@ def get_cache(key: str, max_age_seconds: int = 300) -> Optional[Any]:
     return None
 
 def set_cache(key: str, data: Any):
+    if len(_RESPONSE_CACHE) >= MAX_CACHE_SIZE:
+        oldest = min(_RESPONSE_CACHE, key=_cache_eviction_time)
+        _RESPONSE_CACHE.pop(oldest, None)
     _RESPONSE_CACHE[key] = (data, time.time())
 
 
@@ -319,6 +331,9 @@ def _cache_get(key: str):
     return value
 
 def _cache_set(key: str, value: Any, ttl_seconds: int):
+    if len(_RESPONSE_CACHE) >= MAX_CACHE_SIZE:
+        oldest = min(_RESPONSE_CACHE, key=_cache_eviction_time)
+        _RESPONSE_CACHE.pop(oldest, None)
     _RESPONSE_CACHE[key] = (time.time() + ttl_seconds, value)
     return value
 
@@ -590,6 +605,8 @@ async def startup():
         db.service_reports.create_index("ticket_id", unique=True)
         db.attachments.create_index("ticket_id")
         db.notifications.create_index("user_id")
+        db.attendance.create_index([("engineer_id", 1), ("date", -1)])
+        db.notifications.create_index([("user_id", 1), ("created_at", -1)])
         db.otp_challenges.create_index("expires_at", expireAfterSeconds=0)
 
         app.state._indexes_created = True
@@ -1598,12 +1615,10 @@ async def get_device(device_id: str, user=Depends(get_current_user)):
     tickets = list(db.tickets.find(
         {"device_id": device_id}, {"_id": 0}
     ).sort("created_at", -1).limit(100))
+    eng_ids = list({t["assigned_engineer_id"] for t in tickets if t.get("assigned_engineer_id")})
+    eng_map = {e["id"]: e["name"] for e in db.users.find({"id": {"$in": eng_ids}}, {"_id": 0, "id": 1, "name": 1})} if eng_ids else {}
     for t in tickets:
-        if t.get("assigned_engineer_id"):
-            eng = db.users.find_one(
-                {"id": t["assigned_engineer_id"]}, {"_id": 0, "name": 1}
-            )
-            t["engineer_name"] = eng["name"] if eng else None
+        t["engineer_name"] = eng_map.get(t.get("assigned_engineer_id"))
     return {"device": device, "history": tickets}
 
 # ---------- TICKETS ----------
@@ -2554,13 +2569,17 @@ async def admin_dashboard(user=Depends(get_current_user)):
 
         # ---- Recent activity (LIMITED) ----
         if user.get("role") == "sub_admin":
-            ticket_ids = [t["id"] for t in db.tickets.find(ticket_scope, {"_id": 0, "id": 1})]
-            logs = list(
-                db.ticket_status_logs
-                .find({"$or": [{"ticket_id": {"$in": ticket_ids}}, {"target_user_id": user["id"]}]}, {"_id": 0})
-                .sort("timestamp", -1)
-                .limit(5)
-            )
+            logs = list(db.ticket_status_logs.aggregate([
+                {"$lookup": {"from": "tickets", "localField": "ticket_id", "foreignField": "id", "as": "ticket"}},
+                {"$match": {"$or": [
+                    {"$and": [{"ticket.is_deleted": {"$ne": True}}, {"ticket.company_id": {"$in": user.get("assigned_company_ids") or []}}]},
+                    {"$and": [{"ticket.is_deleted": {"$ne": True}}, {"ticket.created_by": user["id"]}]},
+                    {"target_user_id": user["id"]},
+                ]}},
+                {"$sort": {"timestamp": -1}},
+                {"$limit": 5},
+                {"$project": {"_id": 0, "ticket": 0}},
+            ]))
         else:
             logs = list(
                 db.ticket_status_logs
@@ -2813,65 +2832,42 @@ async def analytics(user=Depends(get_current_user)):
     )[:10]
 
     # 7. Resolution time analytics — avg hours to close a ticket
-    closed_tickets = list(db.tickets.find(
-        {"status": {"$in": ["closed", "report_generated"]},
-         "completed_at": {"$ne": None},
-         "created_at": {"$ne": None},
-         **scope},
-        {"_id": 0, "created_at": 1, "completed_at": 1, "assigned_engineer_id": 1}
-    ).limit(500))
-
-    def hours_diff(start, end):
-        try:
-            from datetime import datetime as dt
-            fmt = "%Y-%m-%dT%H:%M:%S"
-            s = dt.fromisoformat(start[:19])
-            e = dt.fromisoformat(end[:19])
-            diff = (e - s).total_seconds() / 3600
-            return round(diff, 1) if diff >= 0 else None
-        except:
-            return None
-
-    resolution_hours = [
-        h for t in closed_tickets
-        if (h := hours_diff(t.get("created_at",""), t.get("completed_at",""))) is not None
+    resolution_pipeline = [
+        {"$match": {"status": {"$in": ["closed", "report_generated"]}, "completed_at": {"$ne": None}, "created_at": {"$ne": None}, **scope}},
+        {"$addFields": {"res_hours": {"$divide": [{"$subtract": [{"$dateFromString": {"dateString": {"$substr": ["$completed_at", 0, 19]}}}, {"$dateFromString": {"dateString": {"$substr": ["$created_at", 0, 19]}}}]}, 3600000]}}},
+        {"$match": {"res_hours": {"$gte": 0}}},
+        {"$facet": {
+            "stats": [{"$group": {"_id": None, "avg": {"$avg": "$res_hours"}, "min": {"$min": "$res_hours"}, "max": {"$max": "$res_hours"}, "count": {"$sum": 1}}}],
+            "buckets": [{"$bucket": {"groupBy": "$res_hours", "boundaries": [0, 4, 8, 24, 72, 168, 999999], "default": "other", "output": {"count": {"$sum": 1}}}}],
+            "by_engineer": [{"$group": {"_id": "$assigned_engineer_id", "avg_hours": {"$avg": "$res_hours"}, "tickets": {"$sum": 1}}}],
+        }},
     ]
+    res_result = list(db.tickets.aggregate(resolution_pipeline))
+    res_data = res_result[0] if res_result else {}
+    res_stats = (res_data.get("stats") or [{}])[0]
 
-    avg_hours = round(sum(resolution_hours) / len(resolution_hours), 1) if resolution_hours else 0
-    min_hours = min(resolution_hours, default=0)
-    max_hours = max(resolution_hours, default=0)
+    avg_hours = round(res_stats.get("avg") or 0, 1)
+    min_hours = round(res_stats.get("min") or 0, 1)
+    max_hours = round(res_stats.get("max") or 0, 1)
+    total_closed = res_stats.get("count", 0)
 
-    # Bucket into ranges for chart
+    bucket_counts = {b["_id"]: b["count"] for b in res_data.get("buckets", []) if isinstance(b.get("_id"), (int, float))}
     buckets = [
-        {"range": "< 4 hrs",   "min": 0,   "max": 4},
-        {"range": "4–8 hrs",   "min": 4,   "max": 8},
-        {"range": "8–24 hrs",  "min": 8,   "max": 24},
-        {"range": "1–3 days",  "min": 24,  "max": 72},
-        {"range": "3–7 days",  "min": 72,  "max": 168},
-        {"range": "> 7 days",  "min": 168, "max": 999999},
+        {"range": "< 4 hrs",   "min": 0,   "max": 4,      "count": bucket_counts.get(0, 0)},
+        {"range": "4–8 hrs",   "min": 4,   "max": 8,      "count": bucket_counts.get(4, 0)},
+        {"range": "8–24 hrs",  "min": 8,   "max": 24,     "count": bucket_counts.get(8, 0)},
+        {"range": "1–3 days",  "min": 24,  "max": 72,     "count": bucket_counts.get(24, 0)},
+        {"range": "3–7 days",  "min": 72,  "max": 168,    "count": bucket_counts.get(72, 0)},
+        {"range": "> 7 days",  "min": 168, "max": 999999, "count": bucket_counts.get(168, 0)},
     ]
-    for b in buckets:
-        b["count"] = sum(1 for h in resolution_hours if b["min"] <= h < b["max"])
 
-    # Per engineer avg resolution
-    eng_res_map = {}
-    for t in closed_tickets:
-        eid = t.get("assigned_engineer_id")
-        if not eid: continue
-        h = hours_diff(t.get("created_at",""), t.get("completed_at",""))
-        if h is None: continue
-        if eid not in eng_res_map: eng_res_map[eid] = []
-        eng_res_map[eid].append(h)
-
-    eng_resolution = []
-    for eid, hrs in eng_res_map.items():
-        eng = db.users.find_one({"id": eid}, {"_id": 0, "name": 1})
-        if eng:
-            eng_resolution.append({
-                "name": eng["name"],
-                "avg_hours": round(sum(hrs) / len(hrs), 1),
-                "tickets": len(hrs),
-            })
+    eng_res_raw = [r for r in res_data.get("by_engineer", []) if r.get("_id")]
+    eng_ids = list({r["_id"] for r in eng_res_raw})
+    eng_name_map2 = {e["id"]: e["name"] for e in db.users.find({"id": {"$in": eng_ids}}, {"_id": 0, "id": 1, "name": 1})} if eng_ids else {}
+    eng_resolution = [
+        {"name": eng_name_map2[r["_id"]], "avg_hours": round(r.get("avg_hours") or 0, 1), "tickets": r.get("tickets", 0)}
+        for r in eng_res_raw if r["_id"] in eng_name_map2
+    ]
     eng_resolution.sort(key=lambda x: x["avg_hours"])
 
     response = {
@@ -2886,7 +2882,7 @@ async def analytics(user=Depends(get_current_user)):
             "avg_hours": avg_hours,
             "min_hours": min_hours,
             "max_hours": max_hours,
-            "total_closed": len(resolution_hours),
+            "total_closed": total_closed,
             "buckets": buckets,
             "by_engineer": eng_resolution,
         },

@@ -15,13 +15,15 @@ const STAT_CARDS = [
   { key: "in_progress", label: "In Progress" },
   { key: "completed", label: "Completed" },
 ];
+const CACHE_VERSION = "v2";
 
 export default function AdminDashboard() {
   const [engineers, setEngineers] = useState([]);
   const [data, setData] = useState(() => {
     try {
       const cached = localStorage.getItem("dashboard");
-      return cached ? JSON.parse(cached) : null;
+      const parsed = cached ? JSON.parse(cached) : null;
+      return parsed?.version === CACHE_VERSION ? parsed.data : null;
     } catch {
       return null;
     }
@@ -34,14 +36,16 @@ export default function AdminDashboard() {
         const { data: fresh } = await api.get("/dashboard/admin");
         setData(fresh);
         setEngineers(fresh.engineers?.work_modes || []);
-        localStorage.setItem("dashboard", JSON.stringify(fresh));
+        localStorage.setItem("dashboard", JSON.stringify({ version: CACHE_VERSION, data: fresh }));
       } catch (err) {
         console.error("Dashboard fetch error:", err);
       }
     };
 
     load();
-    const t = setInterval(load, 60000);
+    const t = setInterval(() => {
+      if (!document.hidden) load();
+    }, 60000);
     return () => clearInterval(t);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
