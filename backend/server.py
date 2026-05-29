@@ -790,9 +790,11 @@ async def verify_otp(request: Request, payload: OTPVerifyRequest):
             {"$set": {"last_login": now_iso()}}
         )
 
-        #  Create token (SAFE format)
+        #  Create token (SAFE format) — must use user["id"] (UUID), not user["_id"]
+        #  (MongoDB ObjectId), so that get_current_user can look up the user
+        #  with {"id": payload["sub"]} and return assigned_company_ids etc.
         token = create_access_token(
-            str(user["_id"]),
+            user.get("id") or str(user["_id"]),
             user["email"],
             user.get("role", "admin")
         )
@@ -800,6 +802,8 @@ async def verify_otp(request: Request, payload: OTPVerifyRequest):
         return {
             "token": token,
             "user": {
+                "id": user.get("id") or str(user["_id"]),
+                "name": user.get("name", ""),
                 "email": user["email"],
                 "role": user.get("role", "admin")
             }
@@ -917,12 +921,8 @@ class SubAdminUpdate(BaseModel):
     employee_id: Optional[str] = None
     designation: Optional[str] = None
     address: Optional[str] = None
-    # NOTE: assigned_company_ids is intentionally excluded here.
-    # Only the sub-admin themselves can manage their own company assignments
-    # via PATCH /sub-admins/me/companies
-
-class SubAdminSelfCompaniesUpdate(BaseModel):
-    assigned_company_ids: List[str] = []
+    assigned_company_ids: Optional[List[str]] = None
+    assigned_engineer_ids: Optional[List[str]] = None
 
 @api.get("/sub-admins", dependencies=[Depends(require_admin)])
 async def list_sub_admins(q: Optional[str] = None):
@@ -954,6 +954,7 @@ async def create_sub_admin(payload: SubAdminCreate):
         "is_active": True,
         "status": "active",
         "assigned_company_ids": [],
+        "assigned_engineer_ids": [],
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
@@ -962,7 +963,12 @@ async def create_sub_admin(payload: SubAdminCreate):
 
 @api.patch("/sub-admins/{sub_admin_id}", dependencies=[Depends(require_admin)])
 async def update_sub_admin(sub_admin_id: str, payload: SubAdminUpdate):
-    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    data = payload.model_dump()
+    updates = {}
+    for k, v in data.items():
+        # Include lists even if empty (admin clearing assignments), exclude None fields
+        if v is not None:
+            updates[k] = v
     if "password" in updates:
         updates["password_hash"] = hash_password(updates.pop("password"))
     updates["updated_at"] = now_iso()
@@ -972,41 +978,6 @@ async def update_sub_admin(sub_admin_id: str, payload: SubAdminUpdate):
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Sub-admin not found")
     return clean(db.users.find_one({"id": sub_admin_id}, {"_id": 0, "password_hash": 0}))
-
-@api.patch("/sub-admins/me/companies")
-async def update_my_companies(
-    payload: SubAdminSelfCompaniesUpdate,
-    user=Depends(get_current_user),
-):
-    """Sub-admin self-service: update their own assigned company list.
-    Admin role is explicitly blocked — only sub_admin may call this."""
-    if user.get("role") != "sub_admin":
-        raise HTTPException(
-            status_code=403,
-            detail="Only sub-admins can manage their own company assignments",
-        )
-    updated_at = now_iso()
-    db.users.update_one(
-        {"id": user["id"], "role": "sub_admin"},
-        {"$set": {
-            "assigned_company_ids": payload.assigned_company_ids,
-            "updated_at": updated_at,
-        }},
-    )
-    db.ticket_status_logs.insert_one({
-        "id": new_id(),
-        "ticket_id": None,
-        "actor_type": "sub_admin_assignment",
-        "target_user_id": user["id"],
-        "target_user_name": user.get("name"),
-        "old_companies": user.get("assigned_company_ids", []),
-        "new_companies": payload.assigned_company_ids,
-        "changed_by": user["id"],
-        "changed_by_name": user.get("name"),
-        "changed_by_role": user.get("role"),
-        "timestamp": updated_at,
-    })
-    return clean(db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0}))
 
 @api.delete("/sub-admins/{sub_admin_id}", dependencies=[Depends(require_admin)])
 async def delete_sub_admin(sub_admin_id: str):
@@ -1740,11 +1711,6 @@ async def create_ticket(payload: TicketCreate, admin=Depends(require_sub_admin))
         raise HTTPException(status_code=404, detail="Company not found")
     if company.get("status") == "inactive":
         raise HTTPException(status_code=400, detail="Company is inactive")
-
-    if admin.get("role") == "sub_admin":
-        company_ids = admin.get("assigned_company_ids") or []
-        if payload.company_id not in company_ids:
-            raise HTTPException(status_code=403, detail="Not authorized to create tickets for this company")
 
     device = _get_or_create_device(company, payload.device)
     ticket_no = next_ticket_number()
