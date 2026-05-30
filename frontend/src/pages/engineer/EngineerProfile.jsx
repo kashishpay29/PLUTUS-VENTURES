@@ -75,7 +75,7 @@ export default function EngineerProfile() {
           </div>
         </div>
 
-        {/* OEM Number */}
+        {/* OEM Number
         <div className="mt-4 p-3 rounded-md bg-slate-50 border border-slate-200">
           <div className="flex items-center justify-between mb-1">
             <div className="text-xs font-bold uppercase tracking-wider text-slate-500">OEM Number</div>
@@ -108,7 +108,7 @@ export default function EngineerProfile() {
               {profile?.oem_number || <span className="text-slate-400 font-sans font-normal text-xs">Not set — tap pencil to add</span>}
             </div>
           )}
-        </div>
+        </div> */}
 
         {user.skills?.length > 0 && (
           <div className="mt-4">

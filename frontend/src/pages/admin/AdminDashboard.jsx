@@ -4,6 +4,7 @@ import {
   Ticket as TicketIcon, Users, Activity, AlertTriangle,
   PlusCircle, ArrowUpRight, Clock, Wifi, WifiOff, MapPin
 } from "lucide-react";
+import { motion } from "framer-motion";
 import { api } from "../../lib/api";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -15,15 +16,13 @@ const STAT_CARDS = [
   { key: "in_progress", label: "In Progress" },
   { key: "completed", label: "Completed" },
 ];
-const CACHE_VERSION = "v2";
 
 export default function AdminDashboard() {
   const [engineers, setEngineers] = useState([]);
   const [data, setData] = useState(() => {
     try {
       const cached = localStorage.getItem("dashboard");
-      const parsed = cached ? JSON.parse(cached) : null;
-      return parsed?.version === CACHE_VERSION ? parsed.data : null;
+      return cached ? JSON.parse(cached) : null;
     } catch {
       return null;
     }
@@ -33,19 +32,20 @@ export default function AdminDashboard() {
   useEffect(() => {
     const load = async () => {
       try {
-        const { data: fresh } = await api.get("/dashboard/admin");
+        const [{ data: fresh }, { data: engData }] = await Promise.all([
+          api.get("/dashboard/admin"),
+          api.get("/engineers"),
+        ]);
         setData(fresh);
-        setEngineers(fresh.engineers?.work_modes || []);
-        localStorage.setItem("dashboard", JSON.stringify({ version: CACHE_VERSION, data: fresh }));
+        setEngineers(Array.isArray(engData) ? engData : engData.items || []);
+        localStorage.setItem("dashboard", JSON.stringify(fresh));
       } catch (err) {
         console.error("Dashboard fetch error:", err);
       }
     };
 
     load();
-    const t = setInterval(() => {
-      if (!document.hidden) load();
-    }, 60000);
+    const t = setInterval(load, 12000);
     return () => clearInterval(t);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -89,8 +89,13 @@ export default function AdminDashboard() {
 
       {/* Big stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {STAT_CARDS.map((s) => (
-          <div key={s.key}>
+        {STAT_CARDS.map((s, i) => (
+          <motion.div
+            key={s.key}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.05 }}
+          >
             <Card className={`p-5 border-l-4 hover-lift rounded-md border-status-${s.key}`}
                   data-testid={`stat-${s.key}`}>
               <div className="text-xs uppercase tracking-[0.18em] text-slate-500 font-bold">
@@ -101,7 +106,7 @@ export default function AdminDashboard() {
               </div>
               <div className="mt-1 text-[11px] text-slate-500">tickets</div>
             </Card>
-          </div>
+          </motion.div>
         ))}
       </div>
 
@@ -177,7 +182,7 @@ export default function AdminDashboard() {
             <Link to="/admin/tickets" className="text-xs font-semibold text-signal hover:underline">
               View board →
             </Link>
-          </div>
+          </div> 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {Object.keys(STATUS_LABEL).filter((s) => s !== "rejected").map((s) => (
               <div key={s} className={`p-3 rounded-md bg-slate-50 border-l-2 border-status-${s}`}>
