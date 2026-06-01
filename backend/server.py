@@ -40,6 +40,37 @@ from auth import (
 from storage_client import init_storage, put_object, get_object
 from pdf_gen import build_service_report_pdf, build_outsource_internal_pdf
 
+# ---------- Firebase ----------
+import firebase_admin
+from firebase_admin import credentials, messaging as fcm_messaging
+
+def _init_firebase():
+    try:
+        sa = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
+        if sa:
+            import json
+            cred = credentials.Certificate(json.loads(sa))
+            firebase_admin.initialize_app(cred)
+            logger.info("✓ Firebase initialized")
+        else:
+            logger.warning("FIREBASE_SERVICE_ACCOUNT not set - push notifications disabled")
+    except Exception as e:
+        logger.error(f"Firebase init failed: {e}")
+
+_init_firebase()
+
+def send_push_notification(token: str, title: str, body: str, data: dict = None):
+    try:
+        message = fcm_messaging.Message(
+            notification=fcm_messaging.Notification(title=title, body=body),
+            data={k: str(v) for k, v in (data or {}).items()},
+            token=token,
+        )
+        fcm_messaging.send(message)
+        logger.info(f"Push sent: {title}")
+    except Exception as e:
+        logger.error(f"Push notification failed: {e}")
+
 # ---------- Setup ----------
 logging.basicConfig(
     level=logging.INFO,
@@ -47,15 +78,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("plutus-serviceops")
 _RESPONSE_CACHE: Dict[str, Any] = {}
-MAX_CACHE_SIZE = 500
-
-def _cache_eviction_time(key: str) -> float:
-    item = _RESPONSE_CACHE[key]
-    if isinstance(item, tuple):
-        for value in item:
-            if isinstance(value, (int, float)):
-                return float(value)
-    return 0
 
 def cache_key(prefix: str, **kwargs) -> str:
     return f"{prefix}:{':'.join(f'{k}={v}' for k, v in sorted(kwargs.items()))}"
@@ -69,9 +91,6 @@ def get_cache(key: str, max_age_seconds: int = 300) -> Optional[Any]:
     return None
 
 def set_cache(key: str, data: Any):
-    if len(_RESPONSE_CACHE) >= MAX_CACHE_SIZE:
-        oldest = min(_RESPONSE_CACHE, key=_cache_eviction_time)
-        _RESPONSE_CACHE.pop(oldest, None)
     _RESPONSE_CACHE[key] = (data, time.time())
 
 
@@ -331,9 +350,6 @@ def _cache_get(key: str):
     return value
 
 def _cache_set(key: str, value: Any, ttl_seconds: int):
-    if len(_RESPONSE_CACHE) >= MAX_CACHE_SIZE:
-        oldest = min(_RESPONSE_CACHE, key=_cache_eviction_time)
-        _RESPONSE_CACHE.pop(oldest, None)
     _RESPONSE_CACHE[key] = (time.time() + ttl_seconds, value)
     return value
 
@@ -605,8 +621,6 @@ async def startup():
         db.service_reports.create_index("ticket_id", unique=True)
         db.attachments.create_index("ticket_id")
         db.notifications.create_index("user_id")
-        db.attendance.create_index([("engineer_id", 1), ("date", -1)])
-        db.notifications.create_index([("user_id", 1), ("created_at", -1)])
         db.otp_challenges.create_index("expires_at", expireAfterSeconds=0)
 
         app.state._indexes_created = True
@@ -807,11 +821,9 @@ async def verify_otp(request: Request, payload: OTPVerifyRequest):
             {"$set": {"last_login": now_iso()}}
         )
 
-        #  Create token (SAFE format) — must use user["id"] (UUID), not user["_id"]
-        #  (MongoDB ObjectId), so that get_current_user can look up the user
-        #  with {"id": payload["sub"]} and return assigned_company_ids etc.
+        #  Create token (SAFE format)
         token = create_access_token(
-            user.get("id") or str(user["_id"]),
+            str(user["_id"]),
             user["email"],
             user.get("role", "admin")
         )
@@ -819,8 +831,6 @@ async def verify_otp(request: Request, payload: OTPVerifyRequest):
         return {
             "token": token,
             "user": {
-                "id": user.get("id") or str(user["_id"]),
-                "name": user.get("name", ""),
                 "email": user["email"],
                 "role": user.get("role", "admin")
             }
@@ -837,6 +847,17 @@ async def me(user=Depends(get_current_user)):
 @api.post("/auth/logout")
 async def logout(user=Depends(get_current_user)):
     return {"ok": True}
+
+class FCMTokenUpdate(BaseModel):
+    token: str
+
+@api.post("/users/fcm-token")
+async def save_fcm_token(payload: FCMTokenUpdate, user=Depends(get_current_user)):
+    db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"fcm_token": payload.token, "updated_at": now_iso()}}
+    )
+    return {"status": "saved"}
 
 # ---------- ENGINEERS ----------
 @api.get("/engineers")
@@ -920,6 +941,48 @@ async def delete_engineer(eng_id: str):
         raise HTTPException(status_code=404, detail="Engineer not found")
     return {"ok": True}
 
+# ---------- ADMINS ----------
+class AdminCreate(BaseModel):
+    name: str
+    email: EmailStr
+    phone: Optional[str] = None
+    password: str
+    designation: Optional[str] = None
+
+@api.get("/admins", dependencies=[Depends(require_admin)])
+async def list_admins():
+    items = list(db.users.find({"role": "admin"}, {"_id": 0, "password_hash": 0}).sort("created_at", -1))
+    return {"items": items, "total": len(items)}
+
+@api.post("/admins", dependencies=[Depends(require_admin)])
+async def create_admin(payload: AdminCreate):
+    email = payload.email.lower().strip()
+    if db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already exists")
+    doc = {
+        "id": new_id(),
+        "name": payload.name,
+        "email": email,
+        "phone": payload.phone,
+        "designation": payload.designation or "Admin",
+        "role": "admin",
+        "password_hash": hash_password(payload.password),
+        "is_active": True,
+        "is_available": True,
+        "status": "active",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    db.users.insert_one(doc)
+    return clean({**doc})
+
+@api.delete("/admins/{admin_id}", dependencies=[Depends(require_admin)])
+async def delete_admin(admin_id: str):
+    res = db.users.delete_one({"id": admin_id, "role": "admin"})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    return {"status": "deleted"}
+
 # ---------- SUB-ADMINS ----------
 class SubAdminCreate(BaseModel):
     name: str
@@ -938,8 +1001,12 @@ class SubAdminUpdate(BaseModel):
     employee_id: Optional[str] = None
     designation: Optional[str] = None
     address: Optional[str] = None
-    assigned_company_ids: Optional[List[str]] = None
-    assigned_engineer_ids: Optional[List[str]] = None
+    # NOTE: assigned_company_ids is intentionally excluded here.
+    # Only the sub-admin themselves can manage their own company assignments
+    # via PATCH /sub-admins/me/companies
+
+class SubAdminSelfCompaniesUpdate(BaseModel):
+    assigned_company_ids: List[str] = []
 
 @api.get("/sub-admins", dependencies=[Depends(require_admin)])
 async def list_sub_admins(q: Optional[str] = None):
@@ -971,7 +1038,6 @@ async def create_sub_admin(payload: SubAdminCreate):
         "is_active": True,
         "status": "active",
         "assigned_company_ids": [],
-        "assigned_engineer_ids": [],
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
@@ -980,12 +1046,7 @@ async def create_sub_admin(payload: SubAdminCreate):
 
 @api.patch("/sub-admins/{sub_admin_id}", dependencies=[Depends(require_admin)])
 async def update_sub_admin(sub_admin_id: str, payload: SubAdminUpdate):
-    data = payload.model_dump()
-    updates = {}
-    for k, v in data.items():
-        # Include lists even if empty (admin clearing assignments), exclude None fields
-        if v is not None:
-            updates[k] = v
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
     if "password" in updates:
         updates["password_hash"] = hash_password(updates.pop("password"))
     updates["updated_at"] = now_iso()
@@ -995,6 +1056,41 @@ async def update_sub_admin(sub_admin_id: str, payload: SubAdminUpdate):
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Sub-admin not found")
     return clean(db.users.find_one({"id": sub_admin_id}, {"_id": 0, "password_hash": 0}))
+
+@api.patch("/sub-admins/me/companies")
+async def update_my_companies(
+    payload: SubAdminSelfCompaniesUpdate,
+    user=Depends(get_current_user),
+):
+    """Sub-admin self-service: update their own assigned company list.
+    Admin role is explicitly blocked — only sub_admin may call this."""
+    if user.get("role") != "sub_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only sub-admins can manage their own company assignments",
+        )
+    updated_at = now_iso()
+    db.users.update_one(
+        {"id": user["id"], "role": "sub_admin"},
+        {"$set": {
+            "assigned_company_ids": payload.assigned_company_ids,
+            "updated_at": updated_at,
+        }},
+    )
+    db.ticket_status_logs.insert_one({
+        "id": new_id(),
+        "ticket_id": None,
+        "actor_type": "sub_admin_assignment",
+        "target_user_id": user["id"],
+        "target_user_name": user.get("name"),
+        "old_companies": user.get("assigned_company_ids", []),
+        "new_companies": payload.assigned_company_ids,
+        "changed_by": user["id"],
+        "changed_by_name": user.get("name"),
+        "changed_by_role": user.get("role"),
+        "timestamp": updated_at,
+    })
+    return clean(db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0}))
 
 @api.delete("/sub-admins/{sub_admin_id}", dependencies=[Depends(require_admin)])
 async def delete_sub_admin(sub_admin_id: str):
@@ -1472,7 +1568,11 @@ async def export_device_history_v2(
     end_date: Optional[str] = None,
     user=Depends(require_sub_admin),
 ):
-    
+    """Export filtered device history to Excel (.xlsx).
+
+    Columns: Device ID, Ticket ID, Company Name, Engineer Name, Status,
+    Created Date, Closed Date, Product Reference Number, OEM Reference Number.
+    """
     import io
     try:
         import openpyxl
@@ -1611,10 +1711,12 @@ async def get_device(device_id: str, user=Depends(get_current_user)):
     tickets = list(db.tickets.find(
         {"device_id": device_id}, {"_id": 0}
     ).sort("created_at", -1).limit(100))
-    eng_ids = list({t["assigned_engineer_id"] for t in tickets if t.get("assigned_engineer_id")})
-    eng_map = {e["id"]: e["name"] for e in db.users.find({"id": {"$in": eng_ids}}, {"_id": 0, "id": 1, "name": 1})} if eng_ids else {}
     for t in tickets:
-        t["engineer_name"] = eng_map.get(t.get("assigned_engineer_id"))
+        if t.get("assigned_engineer_id"):
+            eng = db.users.find_one(
+                {"id": t["assigned_engineer_id"]}, {"_id": 0, "name": 1}
+            )
+            t["engineer_name"] = eng["name"] if eng else None
     return {"device": device, "history": tickets}
 
 # ---------- TICKETS ----------
@@ -1722,6 +1824,11 @@ async def create_ticket(payload: TicketCreate, admin=Depends(require_sub_admin))
         raise HTTPException(status_code=404, detail="Company not found")
     if company.get("status") == "inactive":
         raise HTTPException(status_code=400, detail="Company is inactive")
+
+    if admin.get("role") == "sub_admin":
+        company_ids = admin.get("assigned_company_ids") or []
+        if payload.company_id not in company_ids:
+            raise HTTPException(status_code=403, detail="Not authorized to create tickets for this company")
 
     device = _get_or_create_device(company, payload.device)
     ticket_no = next_ticket_number()
@@ -1936,6 +2043,16 @@ async def assign_ticket(ticket_id: str, payload: TicketAssign,
             "read": False,
             "created_at": now_iso(),
         })
+
+        # Push notification to engineer
+        eng_user = db.users.find_one({"id": payload.engineer_id})
+        if eng_user and eng_user.get("fcm_token"):
+            send_push_notification(
+                token=eng_user["fcm_token"],
+                title="New Ticket Assigned",
+                body=f"Ticket {ticket['ticket_no']} assigned to you",
+                data={"ticket_id": ticket_id, "type": "ticket_assigned"}
+            )
     return _ticket_full(db.tickets.find_one({"id": ticket_id}, {"_id": 0}))
 
 @api.post("/tickets/{ticket_id}/outsource-complete")
@@ -2218,6 +2335,18 @@ async def submit_report(ticket_id: str, payload: ReportSubmit,
         "type": "report_ready", "read_status": False, "read": False,
         "created_at": now_iso(),
     })
+
+    # Push to admins and sub_admins
+    admins = db.users.find({"role": {"$in": ["admin", "sub_admin"]}, "fcm_token": {"$exists": True}})
+    for a in admins:
+        send_push_notification(
+            token=a["fcm_token"],
+            title="Service Report Ready",
+            body=f"Ticket {ticket['ticket_no']} report is ready for review",
+            data={"ticket_id": ticket_id, "type": "report_ready"}
+        )
+
+        
     # Send email to client with PDF
     try:
         company = db.companies.find_one({"id": ticket.get("company_id")}, {"_id": 0}) if ticket.get("company_id") else None
@@ -2256,6 +2385,17 @@ async def approve_ticket(ticket_id: str, admin=Depends(require_sub_admin)):
     )
     _log_status(ticket_id, admin, ticket["status"], "closed",
                 "Service report approved and ticket closed")
+    
+    # Push to all admins and sub_admins
+    admins = db.users.find({"role": {"$in": ["admin", "sub_admin"]}, "fcm_token": {"$exists": True}})
+    for a in admins:
+        send_push_notification(
+            token=a["fcm_token"],
+            title="Ticket Closed",
+            body=f"Ticket {ticket.get('ticket_no')} has been closed successfully",
+            data={"ticket_id": ticket_id, "type": "ticket_closed"}
+        )
+        
 
     # Send 'Ticket Closed' email to customer with engineer PDF report attached.
     email_result = None
@@ -2565,17 +2705,13 @@ async def admin_dashboard(user=Depends(get_current_user)):
 
         # ---- Recent activity (LIMITED) ----
         if user.get("role") == "sub_admin":
-            logs = list(db.ticket_status_logs.aggregate([
-                {"$lookup": {"from": "tickets", "localField": "ticket_id", "foreignField": "id", "as": "ticket"}},
-                {"$match": {"$or": [
-                    {"$and": [{"ticket.is_deleted": {"$ne": True}}, {"ticket.company_id": {"$in": user.get("assigned_company_ids") or []}}]},
-                    {"$and": [{"ticket.is_deleted": {"$ne": True}}, {"ticket.created_by": user["id"]}]},
-                    {"target_user_id": user["id"]},
-                ]}},
-                {"$sort": {"timestamp": -1}},
-                {"$limit": 5},
-                {"$project": {"_id": 0, "ticket": 0}},
-            ]))
+            ticket_ids = [t["id"] for t in db.tickets.find(ticket_scope, {"_id": 0, "id": 1})]
+            logs = list(
+                db.ticket_status_logs
+                .find({"$or": [{"ticket_id": {"$in": ticket_ids}}, {"target_user_id": user["id"]}]}, {"_id": 0})
+                .sort("timestamp", -1)
+                .limit(5)
+            )
         else:
             logs = list(
                 db.ticket_status_logs
@@ -2828,42 +2964,65 @@ async def analytics(user=Depends(get_current_user)):
     )[:10]
 
     # 7. Resolution time analytics — avg hours to close a ticket
-    resolution_pipeline = [
-        {"$match": {"status": {"$in": ["closed", "report_generated"]}, "completed_at": {"$ne": None}, "created_at": {"$ne": None}, **scope}},
-        {"$addFields": {"res_hours": {"$divide": [{"$subtract": [{"$dateFromString": {"dateString": {"$substr": ["$completed_at", 0, 19]}}}, {"$dateFromString": {"dateString": {"$substr": ["$created_at", 0, 19]}}}]}, 3600000]}}},
-        {"$match": {"res_hours": {"$gte": 0}}},
-        {"$facet": {
-            "stats": [{"$group": {"_id": None, "avg": {"$avg": "$res_hours"}, "min": {"$min": "$res_hours"}, "max": {"$max": "$res_hours"}, "count": {"$sum": 1}}}],
-            "buckets": [{"$bucket": {"groupBy": "$res_hours", "boundaries": [0, 4, 8, 24, 72, 168, 999999], "default": "other", "output": {"count": {"$sum": 1}}}}],
-            "by_engineer": [{"$group": {"_id": "$assigned_engineer_id", "avg_hours": {"$avg": "$res_hours"}, "tickets": {"$sum": 1}}}],
-        }},
+    closed_tickets = list(db.tickets.find(
+        {"status": {"$in": ["closed", "report_generated"]},
+         "completed_at": {"$ne": None},
+         "created_at": {"$ne": None},
+         **scope},
+        {"_id": 0, "created_at": 1, "completed_at": 1, "assigned_engineer_id": 1}
+    ).limit(500))
+
+    def hours_diff(start, end):
+        try:
+            from datetime import datetime as dt
+            fmt = "%Y-%m-%dT%H:%M:%S"
+            s = dt.fromisoformat(start[:19])
+            e = dt.fromisoformat(end[:19])
+            diff = (e - s).total_seconds() / 3600
+            return round(diff, 1) if diff >= 0 else None
+        except:
+            return None
+
+    resolution_hours = [
+        h for t in closed_tickets
+        if (h := hours_diff(t.get("created_at",""), t.get("completed_at",""))) is not None
     ]
-    res_result = list(db.tickets.aggregate(resolution_pipeline))
-    res_data = res_result[0] if res_result else {}
-    res_stats = (res_data.get("stats") or [{}])[0]
 
-    avg_hours = round(res_stats.get("avg") or 0, 1)
-    min_hours = round(res_stats.get("min") or 0, 1)
-    max_hours = round(res_stats.get("max") or 0, 1)
-    total_closed = res_stats.get("count", 0)
+    avg_hours = round(sum(resolution_hours) / len(resolution_hours), 1) if resolution_hours else 0
+    min_hours = min(resolution_hours, default=0)
+    max_hours = max(resolution_hours, default=0)
 
-    bucket_counts = {b["_id"]: b["count"] for b in res_data.get("buckets", []) if isinstance(b.get("_id"), (int, float))}
+    # Bucket into ranges for chart
     buckets = [
-        {"range": "< 4 hrs",   "min": 0,   "max": 4,      "count": bucket_counts.get(0, 0)},
-        {"range": "4–8 hrs",   "min": 4,   "max": 8,      "count": bucket_counts.get(4, 0)},
-        {"range": "8–24 hrs",  "min": 8,   "max": 24,     "count": bucket_counts.get(8, 0)},
-        {"range": "1–3 days",  "min": 24,  "max": 72,     "count": bucket_counts.get(24, 0)},
-        {"range": "3–7 days",  "min": 72,  "max": 168,    "count": bucket_counts.get(72, 0)},
-        {"range": "> 7 days",  "min": 168, "max": 999999, "count": bucket_counts.get(168, 0)},
+        {"range": "< 4 hrs",   "min": 0,   "max": 4},
+        {"range": "4–8 hrs",   "min": 4,   "max": 8},
+        {"range": "8–24 hrs",  "min": 8,   "max": 24},
+        {"range": "1–3 days",  "min": 24,  "max": 72},
+        {"range": "3–7 days",  "min": 72,  "max": 168},
+        {"range": "> 7 days",  "min": 168, "max": 999999},
     ]
+    for b in buckets:
+        b["count"] = sum(1 for h in resolution_hours if b["min"] <= h < b["max"])
 
-    eng_res_raw = [r for r in res_data.get("by_engineer", []) if r.get("_id")]
-    eng_ids = list({r["_id"] for r in eng_res_raw})
-    eng_name_map2 = {e["id"]: e["name"] for e in db.users.find({"id": {"$in": eng_ids}}, {"_id": 0, "id": 1, "name": 1})} if eng_ids else {}
-    eng_resolution = [
-        {"name": eng_name_map2[r["_id"]], "avg_hours": round(r.get("avg_hours") or 0, 1), "tickets": r.get("tickets", 0)}
-        for r in eng_res_raw if r["_id"] in eng_name_map2
-    ]
+    # Per engineer avg resolution
+    eng_res_map = {}
+    for t in closed_tickets:
+        eid = t.get("assigned_engineer_id")
+        if not eid: continue
+        h = hours_diff(t.get("created_at",""), t.get("completed_at",""))
+        if h is None: continue
+        if eid not in eng_res_map: eng_res_map[eid] = []
+        eng_res_map[eid].append(h)
+
+    eng_resolution = []
+    for eid, hrs in eng_res_map.items():
+        eng = db.users.find_one({"id": eid}, {"_id": 0, "name": 1})
+        if eng:
+            eng_resolution.append({
+                "name": eng["name"],
+                "avg_hours": round(sum(hrs) / len(hrs), 1),
+                "tickets": len(hrs),
+            })
     eng_resolution.sort(key=lambda x: x["avg_hours"])
 
     response = {
@@ -2878,7 +3037,7 @@ async def analytics(user=Depends(get_current_user)):
             "avg_hours": avg_hours,
             "min_hours": min_hours,
             "max_hours": max_hours,
-            "total_closed": total_closed,
+            "total_closed": len(resolution_hours),
             "buckets": buckets,
             "by_engineer": eng_resolution,
         },
@@ -2922,3 +3081,4 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+

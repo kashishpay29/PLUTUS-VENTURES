@@ -6,10 +6,10 @@ import requests
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 API = f"{BASE_URL}/api"
 
-ADMIN_EMAIL = "admin@serviceops.com"
-ADMIN_PASSWORD = "admin123"
-ENG_EMAIL = "engineer@plutusventures.com"
-ENG_PASSWORD = "engineer123"
+# ADMIN_EMAIL = "admin@serviceops.com"
+# ADMIN_PASSWORD = "admin123"
+# ENG_EMAIL = "engineer@plutusventures.com"
+# ENG_PASSWORD = "engineer123"
 
 _PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgAAIAAAUAAeImBZsAAAAASUVORK5CYII="

@@ -1,8 +1,3 @@
-"""
-PDF service report generator.
-Renders ticket details, device info, warranty, engineer notes, parts,
-photos, and customer signature into a branded PDF.
-"""
 import io
 import os
 import base64
