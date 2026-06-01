@@ -27,6 +27,17 @@ export default function Login() {
       const { data } = await api.post("/auth/login", { email, password });
       login(data.token, data.user);
       toast.success(`Welcome back, ${data.user.name}`);
+
+      // Save FCM token for push notifications
+      try {
+        const fcmToken = await requestPermission();
+        if (fcmToken) {
+          await api.post("/users/fcm-token", { token: fcmToken });
+        }
+      } catch (e) {
+        console.error("FCM token error:", e);
+      }
+
       nav(["admin", "sub_admin"].includes(data.user.role) ? "/admin" : "/engineer");
     } catch (err) {
       toast.error(formatError(err.response?.data?.detail) || "Login failed");
@@ -51,14 +62,7 @@ export default function Login() {
           <h1 className="font-display font-black text-5xl xl:text-6xl leading-[1.05] tracking-tight">
             The control room for your field service operation.
           </h1>
-          {/* <p className="mt-6 text-white/70 text-lg max-w-md">
-            Dispatch engineers, track tickets in real time, generate signed PDF reports — all in one place.
-          </p> */}
         </div>
-        {/* <div className="flex items-center gap-2 text-xs text-white/50">
-          <ShieldCheck className="w-4 h-4" />
-          End-to-end encrypted • JWT secured
-        </div> */}
       </div>
 
       {/* Right – Form */}
@@ -114,21 +118,9 @@ export default function Login() {
             >
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <>Sign in <ArrowRight className="w-4 h-4 ml-2" /></>}
             </Button>
-
-            {/* <div className="mt-6 p-4 rounded-md bg-slate-50 border border-slate-200">
-              <div className="text-xs uppercase tracking-wider font-bold text-slate-600 mb-2">Demo Credentials</div>
-              <div className="text-xs text-slate-700 space-y-1 font-mono">
-                <div>admin@plutusventures.com / admin123</div>
-                <div>engineer@plutusventures.com / engineer123</div>
-              </div>
-            </div> */}
           </form>
         </div>
       </div>
     </div>
   );
-}
-const token = await requestPermission();
-if (token) {
-  await api.post("/users/fcm-token", { token });
 }
