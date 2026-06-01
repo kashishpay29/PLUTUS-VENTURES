@@ -40,6 +40,13 @@ from auth import (
 from storage_client import init_storage, put_object, get_object
 from pdf_gen import build_service_report_pdf, build_outsource_internal_pdf
 
+# ---------- Setup ----------
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(name)s | %(message)s'
+)
+logger = logging.getLogger("plutus-serviceops")
+
 # ---------- Firebase ----------
 import firebase_admin
 from firebase_admin import credentials, messaging as fcm_messaging
@@ -70,13 +77,6 @@ def send_push_notification(token: str, title: str, body: str, data: dict = None)
         logger.info(f"Push sent: {title}")
     except Exception as e:
         logger.error(f"Push notification failed: {e}")
-
-# ---------- Setup ----------
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)s | %(name)s | %(message)s'
-)
-logger = logging.getLogger("plutus-serviceops")
 _RESPONSE_CACHE: Dict[str, Any] = {}
 
 def cache_key(prefix: str, **kwargs) -> str:
@@ -3081,4 +3081,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
