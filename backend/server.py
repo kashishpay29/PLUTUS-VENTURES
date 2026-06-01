@@ -613,8 +613,8 @@ async def startup():
         logger.info("✓ Database indexes created")
 
     # Seed admin
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@plutusventures.com")
-    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
+    admin_email = os.environ.get("ADMIN_EMAIL", "vishal@plutusventures.in")
+    admin_password = os.environ.get("ADMIN_PASSWORD", "Vishal@PV2026")
 
     existing = db.users.find_one({"email": admin_email})
 
@@ -646,59 +646,59 @@ async def startup():
             )
 
     # Also keep legacy admin@serviceops.com if it exists
-    legacy = db.users.find_one({"email": "admin@serviceops.com"})
-    if not legacy:
-        db.users.insert_one({
-            "id": new_id(),
-            "email": "admin@serviceops.com",
-            "name": "Admin (legacy)",
-            "role": "admin",
-            "password_hash": hash_password("admin123"),
-            "is_active": True,
-            "is_available": True,
-            "status": "active",
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-        })
+    # legacy = db.users.find_one({"email": "admin@serviceops.com"})
+    # if not legacy:
+    #     db.users.insert_one({
+    #         "id": new_id(),
+    #         "email": "admin@serviceops.com",
+    #         "name": "Admin (legacy)",
+    #         "role": "admin",
+    #         "password_hash": hash_password("admin123"),
+    #         "is_active": True,
+    #         "is_available": True,
+    #         "status": "active",
+    #         "created_at": now_iso(),
+    #         "updated_at": now_iso(),
+    #     })
 
     # Seed engineer
-    eng_email = "engineer@plutusventures.com"
-    if not db.users.find_one({"email": eng_email}):
-        db.users.insert_one({
-            "id": new_id(),
-            "email": eng_email,
-            "name": "Rajiv Kumar",
-            "role": "engineer",
-            "phone": "+91 98765 43210",
-            "password_hash": hash_password("engineer123"),
-            "skills": ["Laptop Repair", "Networking", "Printer"],
-            "employee_id": "EMP-001",
-            "designation": "Senior Field Engineer",
-            "is_active": True,
-            "is_available": True,
-            "status": "active",
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-        })
+    # eng_email = "engineer@plutusventures.com"
+    # if not db.users.find_one({"email": eng_email}):
+    #     db.users.insert_one({
+    #         "id": new_id(),
+    #         "email": eng_email,
+    #         "name": "Rajiv Kumar",
+    #         "role": "engineer",
+    #         "phone": "+91 98765 43210",
+    #         "password_hash": hash_password("engineer123"),
+    #         "skills": ["Laptop Repair", "Networking", "Printer"],
+    #         "employee_id": "EMP-001",
+    #         "designation": "Senior Field Engineer",
+    #         "is_active": True,
+    #         "is_available": True,
+    #         "status": "active",
+    #         "created_at": now_iso(),
+    #         "updated_at": now_iso(),
+    #     })
 
     # Legacy engineer
-    legacy_eng = db.users.find_one({"email": "engineer@serviceops.com"})
-    if not legacy_eng:
-        db.users.insert_one({
-            "id": new_id(),
-            "email": "engineer@serviceops.com",
-            "name": "Field Engineer (legacy)",
-            "role": "engineer",
-            "phone": "+91 90000 00000",
-            "password_hash": hash_password("engineer123"),
-            "skills": ["Laptop Repair"],
-            "employee_id": "EMP-LEG",
-            "is_active": True,
-            "is_available": True,
-            "status": "active",
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-        })
+    # legacy_eng = db.users.find_one({"email": "engineer@serviceops.com"})
+    # if not legacy_eng:
+    #     db.users.insert_one({
+    #         "id": new_id(),
+    #         "email": "engineer@serviceops.com",
+    #         "name": "Field Engineer (legacy)",
+    #         "role": "engineer",
+    #         "phone": "+91 90000 00000",
+    #         "password_hash": hash_password("engineer123"),
+    #         "skills": ["Laptop Repair"],
+    #         "employee_id": "EMP-LEG",
+    #         "is_active": True,
+    #         "is_available": True,
+    #         "status": "active",
+    #         "created_at": now_iso(),
+    #         "updated_at": now_iso(),
+    #     })
 
     # Init local filesystem storage
     init_storage()
@@ -1472,11 +1472,7 @@ async def export_device_history_v2(
     end_date: Optional[str] = None,
     user=Depends(require_sub_admin),
 ):
-    """Export filtered device history to Excel (.xlsx).
-
-    Columns: Device ID, Ticket ID, Company Name, Engineer Name, Status,
-    Created Date, Closed Date, Product Reference Number, OEM Reference Number.
-    """
+    
     import io
     try:
         import openpyxl
