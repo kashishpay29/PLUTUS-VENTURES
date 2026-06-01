@@ -50,7 +50,7 @@ export default function Login() {
       <div className="hidden lg:flex lg:col-span-3 flex-col justify-between p-12 text-white">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-md bg-white grid place-items-center p-1.5">
-            <img src="/assets/optimized/plutus_logo_256.jpeg" alt="Plutus" className="w-full h-full object-contain" />
+            <img src="/assets/logo192.png" alt="Plutus" className="w-full h-full object-contain" />
           </div>
           <div>
             <div className="font-display font-black text-2xl tracking-tight">Plutus Ventures</div>
@@ -70,7 +70,7 @@ export default function Login() {
         <div className="w-full max-w-md">
           <div className="lg:hidden flex items-center gap-3 mb-8">
             <div className="w-12 h-12 rounded-md bg-white border border-slate-200 p-1.5">
-              <img src="/assets/optimized/plutus_logo_256.jpeg" alt="Plutus" className="w-full h-full object-contain" />
+              <img src="/assets/logo192.png" alt="Plutus" className="w-full h-full object-contain" />
             </div>
             <div>
               <div className="font-display font-black text-xl text-navy">Plutus Ventures</div>
