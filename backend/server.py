@@ -53,14 +53,10 @@ from firebase_admin import credentials, messaging as fcm_messaging
 
 def _init_firebase():
     try:
-        sa = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
-        if sa:
-            import json
-            cred = credentials.Certificate(json.loads(sa))
-            firebase_admin.initialize_app(cred)
-            logger.info("✓ Firebase initialized")
-        else:
-            logger.warning("FIREBASE_SERVICE_ACCOUNT not set - push notifications disabled")
+        firebase_admin.initialize_app(options={
+            "projectId": "plutus-ventures"
+        })
+        logger.info("✓ Firebase initialized")
     except Exception as e:
         logger.error(f"Firebase init failed: {e}")
 
