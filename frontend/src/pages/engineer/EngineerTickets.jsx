@@ -1,32 +1,37 @@
-import React, { useEffect, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../../lib/api";
+import { getCachedJson, readCachedJson } from "../../lib/api";
+import { useSmartPolling } from "../../hooks/useSmartPolling";
 import { Card } from "../../components/ui/card";
 import { StatusBadge, formatDate } from "../../lib/status";
 import { ChevronRight } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../components/ui/tabs";
 
+const TICKETS_CACHE_KEY = "engineer-tickets";
+
 export default function EngineerTickets() {
-  const [tickets, setTickets] = useState([]);
+  const [tickets, setTickets] = useState(() => {
+    const cached = readCachedJson(TICKETS_CACHE_KEY, 120000);
+    return Array.isArray(cached) ? cached : cached?.items || [];
+  });
 
   const load = async () => {
     try {
-      const { data } = await api.get("/tickets");
+      const data = await getCachedJson("/tickets", {
+        ttl: 15000,
+        storageKey: TICKETS_CACHE_KEY,
+      });
       setTickets(Array.isArray(data) ? data : data.items || []);
     } catch {}
   };
 
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 60000); // poll every 60 seconds instead of 10
-    return () => clearInterval(t);
-  }, []);
+  useSmartPolling(load, 60000);
 
-  const groups = {
+  const groups = useMemo(() => ({
     active: tickets.filter((t) => ["assigned", "accepted", "travelling", "reached_site", "in_progress"].includes(t.status)),
     resolved: tickets.filter((t) => ["resolved", "completed_with_signature"].includes(t.status)),
     completed: tickets.filter((t) => ["closed", "report_generated", "completed"].includes(t.status)),
-  };
+  }), [tickets]);
 
   return (
     <div className="px-4 py-5 space-y-4" data-testid="engineer-tickets-page">

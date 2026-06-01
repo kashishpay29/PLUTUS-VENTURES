@@ -1,36 +1,42 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../../lib/api";
+import { api, getCachedJson, readCachedJson } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
+import { useSmartPolling } from "../../hooks/useSmartPolling";
 import { Card } from "../../components/ui/card";
 import { Switch } from "../../components/ui/switch";
 import { Inbox, Wrench, CheckCircle2, ChevronRight, Wifi, WifiOff } from "lucide-react";
 import { StatusBadge, formatDate } from "../../lib/status";
 import { toast } from "sonner";
 
+const ENGINEER_DASHBOARD_CACHE_KEY = "engineer-dashboard";
+
 export default function EngineerHome() {
   const { user } = useAuth();
-  const [stats, setStats] = useState(null);
-  const [isRemote, setIsRemote] = useState(false);
+  const [stats, setStats] = useState(() => readCachedJson(ENGINEER_DASHBOARD_CACHE_KEY));
+  const [isRemote, setIsRemote] = useState(() => {
+    const cached = readCachedJson(ENGINEER_DASHBOARD_CACHE_KEY);
+    return Boolean(cached?.is_remote);
+  });
 
   const load = async () => {
     try {
-      const { data } = await api.get("/dashboard/engineer");
+      const data = await getCachedJson("/dashboard/engineer", {
+        ttl: 15000,
+        storageKey: ENGINEER_DASHBOARD_CACHE_KEY,
+      });
       setStats(data);
       setIsRemote(data.is_remote || false);
     } catch {}
   };
 
-  useEffect(() => {
-    load();
-    const i = setInterval(load, 60000);
-    return () => clearInterval(i);
-  }, []);
+  useSmartPolling(load, 60000);
 
   const toggleRemote = async (val) => {
     try {
       setIsRemote(val);
       await api.patch(`/engineers/${user.id}`, { is_remote: val });
+      setStats((prev) => (prev ? { ...prev, is_remote: val } : prev));
       toast.success(val ? "Switched to remote work" : "Switched to on-site work");
     } catch {
       setIsRemote(!val);

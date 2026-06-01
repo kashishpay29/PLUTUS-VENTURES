@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  Ticket as TicketIcon, Users, Activity, AlertTriangle,
-  PlusCircle, ArrowUpRight, Clock, Wifi, WifiOff, MapPin
+  Users, Activity, AlertTriangle,
+  PlusCircle, ArrowUpRight, Clock, Wifi, MapPin
 } from "lucide-react";
-import { motion } from "framer-motion";
-import { api } from "../../lib/api";
+import { getCachedJson, readCachedJson } from "../../lib/api";
+import { useSmartPolling } from "../../hooks/useSmartPolling";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { StatusBadge, STATUS_LABEL, formatDate } from "../../lib/status";
@@ -17,37 +17,31 @@ const STAT_CARDS = [
   { key: "completed", label: "Completed" },
 ];
 
+const DASHBOARD_CACHE_KEY = "admin-dashboard";
+
 export default function AdminDashboard() {
-  const [engineers, setEngineers] = useState([]);
+  const [engineers, setEngineers] = useState(() => {
+    const cached = readCachedJson(DASHBOARD_CACHE_KEY);
+    return cached?.engineers?.work_modes || [];
+  });
   const [data, setData] = useState(() => {
-    try {
-      const cached = localStorage.getItem("dashboard");
-      return cached ? JSON.parse(cached) : null;
-    } catch {
-      return null;
-    }
+    return readCachedJson(DASHBOARD_CACHE_KEY);
   });
 
-  // Keep hooks ABOVE any early return
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [{ data: fresh }, { data: engData }] = await Promise.all([
-          api.get("/dashboard/admin"),
-          api.get("/engineers"),
-        ]);
-        setData(fresh);
-        setEngineers(Array.isArray(engData) ? engData : engData.items || []);
-        localStorage.setItem("dashboard", JSON.stringify(fresh));
-      } catch (err) {
-        console.error("Dashboard fetch error:", err);
-      }
-    };
+  const load = async () => {
+    try {
+      const fresh = await getCachedJson("/dashboard/admin", {
+        ttl: 15000,
+        storageKey: DASHBOARD_CACHE_KEY,
+      });
+      setData(fresh);
+      setEngineers(fresh?.engineers?.work_modes || []);
+    } catch (err) {
+      console.error("Dashboard fetch error:", err);
+    }
+  };
 
-    load();
-    const t = setInterval(load, 12000);
-    return () => clearInterval(t);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useSmartPolling(load, 30000);
 
   if (!data) {
     return (
@@ -89,24 +83,20 @@ export default function AdminDashboard() {
 
       {/* Big stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {STAT_CARDS.map((s, i) => (
-          <motion.div
+        {STAT_CARDS.map((s) => (
+          <Card
             key={s.key}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.05 }}
+            className={`p-5 border-l-4 hover-lift rounded-md border-status-${s.key}`}
+            data-testid={`stat-${s.key}`}
           >
-            <Card className={`p-5 border-l-4 hover-lift rounded-md border-status-${s.key}`}
-                  data-testid={`stat-${s.key}`}>
-              <div className="text-xs uppercase tracking-[0.18em] text-slate-500 font-bold">
-                {s.label}
-              </div>
-              <div className="mt-2 font-display font-black text-4xl text-navy">
-                {counts[s.key] || 0}
-              </div>
-              <div className="mt-1 text-[11px] text-slate-500">tickets</div>
-            </Card>
-          </motion.div>
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500 font-bold">
+              {s.label}
+            </div>
+            <div className="mt-2 font-display font-black text-4xl text-navy">
+              {counts[s.key] || 0}
+            </div>
+            <div className="mt-1 text-[11px] text-slate-500">tickets</div>
+          </Card>
         ))}
       </div>
 
@@ -150,7 +140,7 @@ export default function AdminDashboard() {
             <div className="text-sm text-slate-400 text-center py-4">No engineers added yet</div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {engineers.filter(e => e.is_active).map((e) => (
+              {engineers.map((e) => (
                 <div key={e.id} className={`flex items-center gap-3 p-3 rounded-md border ${
                   e.is_remote ? "bg-blue-50 border-blue-100" : "bg-slate-50 border-slate-100"
                 }`}>

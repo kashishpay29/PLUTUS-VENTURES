@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../../lib/api";
+import { getCachedJson, readCachedJson } from "../../lib/api";
+import { useSmartPolling } from "../../hooks/useSmartPolling";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -24,26 +25,28 @@ const STATUS_FILTERS = [
   { value: "closed",      label: "Closed" },
 ];
 
+const TICKETS_CACHE_KEY = "admin-tickets";
+
 export default function TicketBoard() {
-  const [tickets, setTickets] = useState([]);
+  const [tickets, setTickets] = useState(() => {
+    const cached = readCachedJson(TICKETS_CACHE_KEY, 120000);
+    return Array.isArray(cached) ? cached : cached?.items || [];
+  });
   const [q, setQ] = useState("");
   const [view, setView] = useState("board");
   const [statusFilter, setStatusFilter] = useState("all");
 
   const load = async () => {
     try {
-      const { data } = await api.get("/tickets");
+      const data = await getCachedJson("/tickets", {
+        ttl: 15000,
+        storageKey: TICKETS_CACHE_KEY,
+      });
       setTickets(Array.isArray(data) ? data : data.items || []);
     } catch {}
   };
 
-  useEffect(() => {
-    load();
-    const t = setInterval(() => {
-      if (!document.hidden) load();
-    }, 60000);
-    return () => clearInterval(t);
-  }, []);
+  useSmartPolling(load, 60000);
 
   const statusCounts = useMemo(() => {
     return tickets.reduce((acc, ticket) => {
@@ -59,10 +62,12 @@ export default function TicketBoard() {
       if (!search) return true;
 
       return [
+        ticket.ticket_no,
         ticket.ticket_number,
         ticket.customer_name,
         ticket.device?.device_id,
         ticket.engineer?.name,
+        ticket.company_name,
         ticket.customer_company,
         ticket.company?.name,
       ].some((value) => value?.toLowerCase().includes(search));

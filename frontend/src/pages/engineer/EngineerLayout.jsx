@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   LayoutGrid, ListChecks, User as UserIcon, Bell, LogOut, ClipboardList
 } from "lucide-react";
 import { useAuth } from "../../lib/auth";
-import { api } from "../../lib/api";
+import { getCachedJson, readCachedJson } from "../../lib/api";
+import { useSmartPolling } from "../../hooks/useSmartPolling";
 import { Toaster } from "../../components/ui/sonner";
 
 const NAV = [
@@ -17,22 +18,22 @@ const NAV = [
 export default function EngineerLayout() {
   const { user, logout } = useAuth();
   const nav = useNavigate();
-  const [notes, setNotes] = useState([]);
+  const [notes, setNotes] = useState(() => readCachedJson("notifications", 120000) || []);
   const [showNotes, setShowNotes] = useState(false);
 
-  useEffect(() => {
-    if (user && user !== false && user.role === "engineer") {
-      const load = async () => {
-        try { const { data } = await api.get("/notifications"); setNotes(data); } catch {}
-      };
-      const first = setTimeout(load, 1500);
-      const t = setInterval(load, 60000);
-      return () => {
-        clearTimeout(first);
-        clearInterval(t);
-      };
-    }
-  }, [user]);
+  const loadNotes = async () => {
+    try {
+      const data = await getCachedJson("/notifications", {
+        ttl: 30000,
+        storageKey: "notifications",
+      });
+      setNotes(data);
+    } catch {}
+  };
+
+  useSmartPolling(loadNotes, 60000, {
+    enabled: Boolean(user && user !== false && user.role === "engineer"),
+  });
 
   if (!user || user === false || user.role !== "engineer") {
     if (user === false) nav("/login");

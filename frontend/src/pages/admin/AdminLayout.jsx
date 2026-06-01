@@ -1,11 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Ticket, Users, Cpu, BarChart3, Map, LogOut, Bell, Menu, X,
   Building2, UserCog, History
 } from "lucide-react";
 import { useAuth } from "../../lib/auth";
-import { api } from "../../lib/api";
+import { getCachedJson, readCachedJson } from "../../lib/api";
+import { useSmartPolling } from "../../hooks/useSmartPolling";
 import { Button } from "../../components/ui/button";
 import {
   Popover, PopoverContent, PopoverTrigger
@@ -35,24 +36,20 @@ const SUB_ADMIN_NAV = [
 export default function AdminLayout() {
   const { user, logout } = useAuth();
   const [openSidebar, setOpenSidebar] = useState(false);
-  const [notes, setNotes] = useState([]);
+  const [notes, setNotes] = useState(() => readCachedJson("notifications", 120000) || []);
   const nav = useNavigate();
 
   const loadNotes = async () => {
     try {
-      const { data } = await api.get("/notifications");
+      const data = await getCachedJson("/notifications", {
+        ttl: 30000,
+        storageKey: "notifications",
+      });
       setNotes(data);
     } catch {}
   };
 
-  useEffect(() => {
-    const first = setTimeout(loadNotes, 1500);
-    const t = setInterval(loadNotes, 60000);
-    return () => {
-      clearTimeout(first);
-      clearInterval(t);
-    };
-  }, []);
+  useSmartPolling(loadNotes, 60000);
 
   const unread = notes.filter((n) => !n.read).length;
 
