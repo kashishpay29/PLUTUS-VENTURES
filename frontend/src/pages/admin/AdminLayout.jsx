@@ -82,7 +82,7 @@ export default function AdminLayout() {
         <div className="p-6 flex items-center justify-between border-b border-white/10">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-md bg-white grid place-items-center p-1">
-              <img src="/assets/optimized/plutus_logo_256.jpeg" alt="Plutus" className="w-full h-full object-contain" />
+              <img src="/assets/logo192.png" alt="Plutus" className="w-full h-full object-contain" />
             </div>
             <div>
               <div className="font-display font-black tracking-tight">Plutus Ventures</div>
