@@ -101,7 +101,7 @@ export default function EngineerHome() {
                     <StatusBadge status={t.status} />
                   </div>
                   <div className="font-semibold text-navy text-sm">{t.customer_name}</div>
-                  <div className="text-xs text-slate-500 truncate">{t.device?.brand} {t.device?.model}</div>
+                  <div className="text-xs text-slate-500 truncate">{deviceSummary(t)}</div>
                   <div className="text-xs text-slate-400 mt-2 flex items-center justify-between">
                     <span>{formatDate(t.created_at)}</span>
                     <ChevronRight className="w-4 h-4" />
@@ -131,4 +131,16 @@ function StatTile({ label, value, icon: Icon, color }) {
       <div className="text-[10px] uppercase tracking-wider text-slate-500 mt-1 font-bold">{label}</div>
     </Card>
   );
+}
+
+function ticketDevices(ticket) {
+  return ticket.devices?.length ? ticket.devices : (ticket.device ? [ticket.device] : []);
+}
+
+function deviceSummary(ticket) {
+  const devices = ticketDevices(ticket);
+  const first = devices[0];
+  if (!first) return "—";
+  const primary = `${first.brand || ""} ${first.model || ""}`.trim() || first.device_id || "Device";
+  return devices.length > 1 ? `${primary} +${devices.length - 1} more` : primary;
 }

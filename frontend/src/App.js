@@ -21,6 +21,7 @@ const CompanyDetail = lazy(() => import("@/pages/admin/CompanyDetail"));
 const DeviceHistoryPage = lazy(() => import("@/pages/admin/DeviceHistoryPage"));
 const SubAdminsPage = lazy(() => import("@/pages/admin/SubAdminsPage"));
 const SubAdminAnalyticsPage = lazy(() => import("@/pages/admin/SubAdminAnalyticsPage"));
+const TicketAdminsPage = lazy(() => import("@/pages/admin/TicketAdminsPage"));
 
 const EngineerLayout = lazy(() => import("@/pages/engineer/EngineerLayout"));
 const EngineerHome = lazy(() => import("@/pages/engineer/EngineerHome"));
@@ -43,12 +44,20 @@ function Protected({ role, children }) {
     return <LoadingScreen />;
   }
   if (user === false) return <Navigate to="/login" replace />;
-  if (role === "admin" && !["admin", "sub_admin"].includes(user.role)) {
+  if (role === "admin" && !["admin", "sub_admin", "ticket_admin"].includes(user.role)) {
     return <Navigate to={user.role === "engineer" ? "/engineer" : "/login"} replace />;
   }
   if (role === "engineer" && user.role !== "engineer") {
     return <Navigate to="/admin" replace />;
   }
+  return children;
+}
+
+function RoleGate({ roles, children }) {
+  const { user } = useAuth();
+  if (user === null) return <LoadingScreen />;
+  if (user === false) return <Navigate to="/login" replace />;
+  if (!roles.includes(user.role)) return <Navigate to="/admin" replace />;
   return children;
 }
 
@@ -58,7 +67,7 @@ function RootRedirect() {
     return <LoadingScreen />;
   }
   if (user === false) return <Navigate to="/login" replace />;
-  return <Navigate to={["admin", "sub_admin"].includes(user.role) ? "/admin" : "/engineer"} replace />;
+  return <Navigate to={["admin", "sub_admin", "ticket_admin"].includes(user.role) ? "/admin" : "/engineer"} replace />;
 }
 
 function App() {
@@ -76,16 +85,17 @@ function App() {
                 <Route path="tickets" element={<TicketBoard />} />
                 <Route path="tickets/new" element={<TicketCreate />} />
                 <Route path="tickets/:id" element={<TicketDetail />} />
-                <Route path="companies" element={<CompaniesPage />} />
-                <Route path="companies/new" element={<CompanyNew />} />
-                <Route path="companies/:id" element={<CompanyDetail />} />
-                <Route path="engineers" element={<EngineersPage />} />
-                <Route path="devices" element={<DevicesPage />} />
+                <Route path="companies" element={<RoleGate roles={["admin", "sub_admin"]}><CompaniesPage /></RoleGate>} />
+                <Route path="companies/new" element={<RoleGate roles={["admin", "sub_admin"]}><CompanyNew /></RoleGate>} />
+                <Route path="companies/:id" element={<RoleGate roles={["admin", "sub_admin"]}><CompanyDetail /></RoleGate>} />
+                <Route path="engineers" element={<RoleGate roles={["admin", "sub_admin"]}><EngineersPage /></RoleGate>} />
+                <Route path="devices" element={<RoleGate roles={["admin"]}><DevicesPage /></RoleGate>} />
                 <Route path="device-history" element={<DeviceHistoryPage />} />
-                <Route path="live" element={<LivePage />} />
-                <Route path="analytics" element={<AnalyticsPage />} />
-                <Route path="sub-admins" element={<SubAdminsPage />} />
-                <Route path="sub-admins/:id/analytics" element={<SubAdminAnalyticsPage />} />
+                <Route path="live" element={<RoleGate roles={["admin", "sub_admin"]}><LivePage /></RoleGate>} />
+                <Route path="analytics" element={<RoleGate roles={["admin", "sub_admin"]}><AnalyticsPage /></RoleGate>} />
+                <Route path="sub-admins" element={<RoleGate roles={["admin"]}><SubAdminsPage /></RoleGate>} />
+                <Route path="sub-admins/:id/analytics" element={<RoleGate roles={["admin"]}><SubAdminAnalyticsPage /></RoleGate>} />
+                <Route path="ticket-admins" element={<RoleGate roles={["admin"]}><TicketAdminsPage /></RoleGate>} />
               </Route>
 
               <Route path="/engineer" element={<Protected role="engineer"><EngineerLayout /></Protected>}>

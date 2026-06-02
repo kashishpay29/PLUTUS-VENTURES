@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Plus, Search, Building2, Pencil, Trash2, MapPin, Phone, Mail,
-  ChevronLeft, ChevronRight, CheckSquare, Square, Save
+  ChevronLeft, ChevronRight
 } from "lucide-react";
 import { api, formatError } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
@@ -30,10 +30,6 @@ export default function CompaniesPage() {
   const [delTarget, setDelTarget] = useState(null);
   const nav = useNavigate();
 
-  // Sub-admin self-assign state
-  const [myCompanyIds, setMyCompanyIds] = useState([]);
-  const [saving, setSaving] = useState(false);
-
   const load = async () => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
@@ -46,36 +42,11 @@ export default function CompaniesPage() {
     } catch {}
   };
 
-  // Load sub-admin's current assigned companies
-  useEffect(() => {
-    if (isSubAdmin) {
-      setMyCompanyIds(user?.assigned_company_ids || []);
-    }
-  }, [isSubAdmin, user]);
-
   useEffect(() => {
     const t = setTimeout(load, q ? 250 : 0);
     return () => clearTimeout(t);
     // eslint-disable-next-line
   }, [q, status, page]);
-
-  const toggleMyCompany = (id) => {
-    setMyCompanyIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  };
-
-  const saveMyCompanies = async () => {
-    setSaving(true);
-    try {
-      await api.patch("/sub-admins/me/companies", { assigned_company_ids: myCompanyIds });
-      toast.success("Your company assignments updated");
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to save");
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const confirmDelete = async () => {
     try {
@@ -98,35 +69,14 @@ export default function CompaniesPage() {
           <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Customers</div>
           <h1 className="font-display font-black text-3xl tracking-tight text-navy">Companies</h1>
           <p className="text-slate-500 text-sm mt-1">
-            {isSubAdmin
-              ? <><span className="font-mono font-bold text-navy">{myCompanyIds.length}</span> companies selected</>
-              : <><span className="font-mono font-bold text-navy">{data.total}</span> companies on file</>
-            }
+            <span className="font-mono font-bold text-navy">{data.total}</span> companies on file
           </p>
         </div>
-        {isSubAdmin ? (
-          <div className="flex gap-2">
-            <Button
-              onClick={saveMyCompanies}
-              disabled={saving}
-              className="bg-slate-600 hover:bg-slate-700 text-white rounded-md h-11"
-            >
-              <Save className="w-4 h-4 mr-2" />
-              {saving ? "Saving…" : "Save My Companies"}
-            </Button>
-            <Link to="/admin/companies/new">
-              <Button className="bg-navy hover:bg-navy/90 text-white rounded-md h-11" data-testid="add-company-btn">
-                <Plus className="w-4 h-4 mr-2" /> Add Company
-              </Button>
-            </Link>
-          </div>
-        ) : (
-          <Link to="/admin/companies/new">
-            <Button className="bg-navy hover:bg-navy/90 text-white rounded-md h-11" data-testid="add-company-btn">
-              <Plus className="w-4 h-4 mr-2" /> Add Company
-            </Button>
-          </Link>
-        )}
+        <Link to="/admin/companies/new">
+          <Button className="bg-navy hover:bg-navy/90 text-white rounded-md h-11" data-testid="add-company-btn">
+            <Plus className="w-4 h-4 mr-2" /> Add Company
+          </Button>
+        </Link>
       </div>
 
       <Card className="p-4 rounded-md">
@@ -158,7 +108,6 @@ export default function CompaniesPage() {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr className="text-left text-[10px] uppercase tracking-[0.15em] text-slate-500">
-              {isSubAdmin && <th className="p-3 w-10"></th>}
               <th className="p-3 font-bold">Company</th>
               <th className="p-3 font-bold">Code</th>
               <th className="p-3 font-bold">Contact</th>
@@ -172,22 +121,10 @@ export default function CompaniesPage() {
             {data.items.map((c) => (
               <tr
                 key={c.id}
-                onClick={() => isSubAdmin ? toggleMyCompany(c.id) : nav(`/admin/companies/${c.id}`)}
-                className={`border-b border-slate-100 cursor-pointer transition-colors ${
-                  isSubAdmin && myCompanyIds.includes(c.id)
-                    ? "bg-blue-50/60 hover:bg-blue-50"
-                    : "hover:bg-slate-50"
-                }`}
+                onClick={() => nav(`/admin/companies/${c.id}`)}
+                className="border-b border-slate-100 cursor-pointer transition-colors hover:bg-slate-50"
                 data-testid={`company-row-${c.company_code}`}
               >
-                {isSubAdmin && (
-                  <td className="p-3">
-                    {myCompanyIds.includes(c.id)
-                      ? <CheckSquare className="w-4 h-4 text-blue-600" />
-                      : <Square className="w-4 h-4 text-slate-300" />
-                    }
-                  </td>
-                )}
                 <td className="p-3">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-md bg-navy/5 grid place-items-center">
@@ -237,7 +174,7 @@ export default function CompaniesPage() {
               </tr>
             ))}
             {data.items.length === 0 && (
-              <tr><td colSpan={isSubAdmin ? 7 : 7} className="p-12 text-center text-slate-500">
+              <tr><td colSpan={isSubAdmin ? 6 : 7} className="p-12 text-center text-slate-500">
                 <Building2 className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                 <div>No companies found</div>
                 <Link to="/admin/companies/new" className="text-signal text-sm font-bold mt-2 inline-block">

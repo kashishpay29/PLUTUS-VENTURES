@@ -15,6 +15,12 @@ import { ArrowLeft, Save, Loader2, Building2, PlusCircle, AlertCircle, Paperclip
 export default function TicketCreate() {
   const nav = useNavigate();
   const [params] = useSearchParams();
+  const makeDevice = () => ({
+    brand: "", model: "", serial_number: "",
+    device_name: "", device_type: "",
+    warranty_status: "none", warranty_expiry: "",
+    purchase_date: "",
+  });
   const [saving, setSaving] = useState(false);
   const [photos, setPhotos] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -43,15 +49,25 @@ export default function TicketCreate() {
     priority: "medium",
     product_reference_number: "",
     oem_reference_number: "",
-    device: {
-      brand: "", model: "", serial_number: "",
-      device_name: "", device_type: "",
-      warranty_status: "none", warranty_expiry: "",
-      purchase_date: "",
-    },
+    devices: [makeDevice()],
   });
   const setF = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  const setD = (k, v) => setForm((f) => ({ ...f, device: { ...f.device, [k]: v } }));
+  const setD = (idx, k, v) => setForm((f) => ({
+    ...f,
+    devices: f.devices.map((device, i) => (
+      i === idx ? { ...device, [k]: v } : device
+    )),
+  }));
+  const addDevice = () => setForm((f) => ({
+    ...f,
+    devices: [...f.devices, makeDevice()],
+  }));
+  const removeDevice = (idx) => setForm((f) => ({
+    ...f,
+    devices: f.devices.length <= 1
+      ? f.devices
+      : f.devices.filter((_, i) => i !== idx),
+  }));
 
   useEffect(() => {
     api.get("/companies?status=active&page_size=500")
@@ -112,17 +128,27 @@ export default function TicketCreate() {
     }
     setSaving(true);
     try {
+      const devices = form.devices.map((device) => ({
+        ...device,
+        brand: device.brand.trim(),
+        model: device.model.trim(),
+        serial_number: device.serial_number?.trim() || null,
+        warranty_expiry: device.warranty_expiry || null,
+        purchase_date: device.purchase_date || null,
+      }));
+      if (devices.some((device) => !device.brand || !device.model)) {
+        setSaving(false);
+        return toast.error("Brand and model are required for every device");
+      }
+      const ticketFields = { ...form };
+      delete ticketFields.devices;
       const payload = {
         photos: photos.map((p) => p.url),
-        ...form,
+        ...ticketFields,
         product_reference_number: form.product_reference_number?.trim() || null,
         oem_reference_number: form.oem_reference_number?.trim() || null,
-        device: {
-          ...form.device,
-          serial_number: form.device.serial_number || null,
-          warranty_expiry: form.device.warranty_expiry || null,
-          purchase_date: form.device.purchase_date || null,
-        },
+        device: devices[0],
+        devices,
       };
       const { data } = await api.post("/tickets", payload);
       toast.success(`Ticket ${data.ticket_no} created`);
@@ -313,58 +339,95 @@ export default function TicketCreate() {
             </Card>
 
             <Card className="p-6 rounded-md">
-              <h3 className="font-bold text-navy mb-4 text-sm uppercase tracking-wider">Device</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-xs font-bold">Brand *</Label>
-                  <Input value={form.device.brand} onChange={(e) => setD("brand", e.target.value)} required
-                         placeholder="Dell / HP / Apple…" className="mt-1.5"
-                         data-testid="device-brand-input" />
-                </div>
-                <div>
-                  <Label className="text-xs font-bold">Model *</Label>
-                  <Input value={form.device.model} onChange={(e) => setD("model", e.target.value)} required
-                         placeholder="Latitude 5420" className="mt-1.5"
-                         data-testid="device-model-input" />
-                </div>
-                <div>
-                  <Label className="text-xs font-bold">Device type</Label>
-                  <Select value={form.device.device_type || ""} onValueChange={(v) => setD("device_type", v)}>
-                    <SelectTrigger className="mt-1.5"><SelectValue placeholder="—" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="laptop">Laptop</SelectItem>
-                      <SelectItem value="desktop">Desktop</SelectItem>
-                      <SelectItem value="server">Server</SelectItem>
-                      <SelectItem value="printer">Printer</SelectItem>
-                      <SelectItem value="network">Network device</SelectItem>
-                      <SelectItem value="other">Other</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-xs font-bold">Serial number</Label>
-                  <Input value={form.device.serial_number} onChange={(e) => setD("serial_number", e.target.value)}
-                         placeholder="Auto Device ID if blank" className="mt-1.5 font-mono"
-                         data-testid="device-serial-input" />
-                </div>
-                <div>
-                  <Label className="text-xs font-bold">Warranty status</Label>
-                  <Select value={form.device.warranty_status} onValueChange={(v) => setD("warranty_status", v)}>
-                    <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="active">Active</SelectItem>
-                      <SelectItem value="expired">Expired</SelectItem>
-                      <SelectItem value="none">None</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {form.device.warranty_status === "active" && (
-                  <div>
-                    <Label className="text-xs font-bold">Warranty expiry</Label>
-                    <Input type="date" value={form.device.warranty_expiry}
-                           onChange={(e) => setD("warranty_expiry", e.target.value)} className="mt-1.5" />
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <h3 className="font-bold text-navy text-sm uppercase tracking-wider">
+                  Devices ({form.devices.length})
+                </h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={addDevice}
+                  className="h-9 rounded-md"
+                  data-testid="add-device-btn"
+                  aria-label="Add another device"
+                >
+                  <PlusCircle className="w-4 h-4 mr-2" /> Add device
+                </Button>
+              </div>
+              <div className="space-y-5">
+                {form.devices.map((device, idx) => (
+                  <div key={idx} className={idx > 0 ? "pt-5 border-t border-slate-200" : ""}>
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                        Device {idx + 1}
+                      </div>
+                      {form.devices.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeDevice(idx)}
+                          className="inline-flex items-center gap-1 text-xs font-bold text-red-600 hover:text-red-700"
+                          aria-label={`Remove device ${idx + 1}`}
+                        >
+                          <X className="w-3.5 h-3.5" /> Remove
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-xs font-bold">Brand *</Label>
+                        <Input value={device.brand} onChange={(e) => setD(idx, "brand", e.target.value)} required
+                               placeholder="Dell / HP / Apple…" className="mt-1.5"
+                               data-testid={idx === 0 ? "device-brand-input" : `device-brand-input-${idx}`} />
+                      </div>
+                      <div>
+                        <Label className="text-xs font-bold">Model *</Label>
+                        <Input value={device.model} onChange={(e) => setD(idx, "model", e.target.value)} required
+                               placeholder="Latitude 5420" className="mt-1.5"
+                               data-testid={idx === 0 ? "device-model-input" : `device-model-input-${idx}`} />
+                      </div>
+                      <div>
+                        <Label className="text-xs font-bold">Device type</Label>
+                        <Select value={device.device_type || ""} onValueChange={(v) => setD(idx, "device_type", v)}>
+                          <SelectTrigger className="mt-1.5"><SelectValue placeholder="—" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="laptop">Laptop</SelectItem>
+                            <SelectItem value="desktop">Desktop</SelectItem>
+                            <SelectItem value="server">Server</SelectItem>
+                            <SelectItem value="printer">Printer</SelectItem>
+                            <SelectItem value="network">Network device</SelectItem>
+                            <SelectItem value="other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label className="text-xs font-bold">Serial number</Label>
+                        <Input value={device.serial_number} onChange={(e) => setD(idx, "serial_number", e.target.value)}
+                               placeholder="Auto Device ID if blank" className="mt-1.5 font-mono"
+                               data-testid={idx === 0 ? "device-serial-input" : `device-serial-input-${idx}`} />
+                      </div>
+                      <div>
+                        <Label className="text-xs font-bold">Warranty status</Label>
+                        <Select value={device.warranty_status} onValueChange={(v) => setD(idx, "warranty_status", v)}>
+                          <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="active">Active</SelectItem>
+                            <SelectItem value="expired">Expired</SelectItem>
+                            <SelectItem value="none">None</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {device.warranty_status === "active" && (
+                        <div>
+                          <Label className="text-xs font-bold">Warranty expiry</Label>
+                          <Input type="date" value={device.warranty_expiry}
+                                 onChange={(e) => setD(idx, "warranty_expiry", e.target.value)} className="mt-1.5" />
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
+                ))}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5 pt-5 border-t border-slate-200">
                 <div>
                   <Label className="text-xs font-bold">Product reference no.</Label>
                   <Input

@@ -21,6 +21,7 @@ const ADMIN_NAV = [
   { to: "/admin/device-history", label: "Device History", icon: History },
   { to: "/admin/live", label: "Live Map", icon: Map },
   { to: "/admin/analytics", label: "Analytics", icon: BarChart3 },
+  { to: "/admin/ticket-admins", label: "Ticket Admins", icon: UserCog, adminOnly: true },
   { to: "/admin/sub-admins", label: "Sub-Admins", icon: UserCog, adminOnly: true },
 ];
 
@@ -31,6 +32,12 @@ const SUB_ADMIN_NAV = [
   { to: "/admin/engineers", label: "Engineers", icon: Users },
   { to: "/admin/device-history", label: "Device History", icon: History },
   { to: "/admin/analytics", label: "My Analytics", icon: BarChart3 },
+];
+
+const TICKET_ADMIN_NAV = [
+  { to: "/admin", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/admin/tickets", label: "Tickets", icon: Ticket },
+  { to: "/admin/device-history", label: "Device History", icon: History },
 ];
 
 export default function AdminLayout() {
@@ -53,11 +60,15 @@ export default function AdminLayout() {
 
   const unread = notes.filter((n) => !n.read).length;
 
-  if (!user || user === false || !["admin", "sub_admin"].includes(user.role)) {
+  if (!user || user === false || !["admin", "sub_admin", "ticket_admin"].includes(user.role)) {
     if (user === false) nav("/login");
     return null;
   }
-  const NAV = user.role === "admin" ? ADMIN_NAV : SUB_ADMIN_NAV;
+  const NAV = user.role === "admin"
+    ? ADMIN_NAV
+    : user.role === "ticket_admin"
+      ? TICKET_ADMIN_NAV
+      : SUB_ADMIN_NAV;
 
   return (
     <div className="min-h-screen flex bg-white">

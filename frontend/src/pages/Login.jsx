@@ -17,7 +17,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   if (user && user.id) {
-    return <Navigate to={["admin", "sub_admin"].includes(user.role) ? "/admin" : "/engineer"} replace />;
+    return <Navigate to={["admin", "sub_admin", "ticket_admin"].includes(user.role) ? "/admin" : "/engineer"} replace />;
   }
 
   const submitCreds = async (e) => {
@@ -38,7 +38,7 @@ export default function Login() {
         console.error("FCM token error:", e);
       }
 
-      nav(["admin", "sub_admin"].includes(data.user.role) ? "/admin" : "/engineer");
+      nav(["admin", "sub_admin", "ticket_admin"].includes(data.user.role) ? "/admin" : "/engineer");
     } catch (err) {
       toast.error(formatError(err.response?.data?.detail) || "Login failed");
     } finally { setLoading(false); }
@@ -82,7 +82,7 @@ export default function Login() {
             Sign in to your console
           </h2>
           <p className="text-slate-500 mb-8 text-sm">
-            Use your admin or engineer credentials.
+            Use your admin, ticket admin, or engineer credentials.
           </p>
 
           <form onSubmit={submitCreds} className="space-y-5">

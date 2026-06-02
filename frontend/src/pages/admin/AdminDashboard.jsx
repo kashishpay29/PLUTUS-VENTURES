@@ -5,6 +5,7 @@ import {
   PlusCircle, ArrowUpRight, Clock, Wifi, MapPin
 } from "lucide-react";
 import { getCachedJson, readCachedJson } from "../../lib/api";
+import { useAuth } from "../../lib/auth";
 import { useSmartPolling } from "../../hooks/useSmartPolling";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -20,6 +21,8 @@ const STAT_CARDS = [
 const DASHBOARD_CACHE_KEY = "admin-dashboard";
 
 export default function AdminDashboard() {
+  const { user } = useAuth();
+  const canManageTeam = ["admin", "sub_admin"].includes(user?.role);
   const [engineers, setEngineers] = useState(() => {
     const cached = readCachedJson(DASHBOARD_CACHE_KEY);
     return cached?.engineers?.work_modes || [];
@@ -123,18 +126,22 @@ export default function AdminDashboard() {
             </span>
             <span className="text-xs text-slate-400">· working off-site</span>
           </div>
-          <Link to="/admin/engineers" className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-signal hover:underline">
-            Manage engineers <ArrowUpRight className="w-3 h-3" />
-          </Link>
+          {canManageTeam && (
+            <Link to="/admin/engineers" className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-signal hover:underline">
+              Manage engineers <ArrowUpRight className="w-3 h-3" />
+            </Link>
+          )}
         </Card>
 
         {/* Engineer work mode */}
         <Card className="p-6 rounded-md lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <div className="text-xs uppercase tracking-[0.18em] text-slate-500 font-bold">Engineer work mode</div>
-            <Link to="/admin/engineers" className="text-xs font-semibold text-signal hover:underline">
-              Manage <ArrowUpRight className="w-3 h-3 inline" />
-            </Link>
+            {canManageTeam && (
+              <Link to="/admin/engineers" className="text-xs font-semibold text-signal hover:underline">
+                Manage <ArrowUpRight className="w-3 h-3 inline" />
+              </Link>
+            )}
           </div>
           {engineers.length === 0 ? (
             <div className="text-sm text-slate-400 text-center py-4">No engineers added yet</div>

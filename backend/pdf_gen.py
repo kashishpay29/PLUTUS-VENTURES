@@ -183,14 +183,43 @@ def build_service_report_pdf(ticket: dict, device: dict, engineer: dict,
 
     # Device
     story.append(Paragraph("DEVICE", h2))
-    warranty = device.get("warranty_status", "none") if device else "none"
-    expiry = device.get("warranty_expiry", "—") if device else "—"
-    story.append(kv_table([
-        ("Brand / Model", f"{device.get('brand', '')} {device.get('model', '')}" if device else ""),
-        ("Serial Number", device.get("serial_number") if device else "—"),
-        ("Device ID", device.get("device_id") if device else "—"),
-        ("Warranty", f"{warranty.upper()} (expires {expiry or '—'})"),
-    ]))
+    devices = ticket.get("devices") or ([device] if device else [])
+    if len(devices) > 1:
+        data = [[
+            Paragraph("<b>#</b>", small),
+            Paragraph("<b>Brand / Model</b>", small),
+            Paragraph("<b>Serial Number</b>", small),
+            Paragraph("<b>Device ID</b>", small),
+            Paragraph("<b>Warranty</b>", small),
+        ]]
+        for idx, item in enumerate(devices, 1):
+            warranty = item.get("warranty_status", "none")
+            expiry = item.get("warranty_expiry") or "—"
+            data.append([
+                Paragraph(str(idx), body),
+                Paragraph(f"{item.get('brand', '')} {item.get('model', '')}".strip() or "—", body),
+                Paragraph(item.get("serial_number") or "—", body),
+                Paragraph(item.get("device_id") or "—", body),
+                Paragraph(f"{warranty.upper()} (expires {expiry})", body),
+            ])
+        t = Table(data, colWidths=[10 * mm, 55 * mm, 40 * mm, 35 * mm, 40 * mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
+            ("GRID", (0, 0), (-1, -1), 0.25, BORDER),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(t)
+    else:
+        warranty = device.get("warranty_status", "none") if device else "none"
+        expiry = device.get("warranty_expiry", "—") if device else "—"
+        story.append(kv_table([
+            ("Brand / Model", f"{device.get('brand', '')} {device.get('model', '')}" if device else ""),
+            ("Serial Number", device.get("serial_number") if device else "—"),
+            ("Device ID", device.get("device_id") if device else "—"),
+            ("Warranty", f"{warranty.upper()} (expires {expiry or '—'})"),
+        ]))
     story.append(Spacer(1, 8))
 
     # Engineer / Outsource
@@ -430,10 +459,42 @@ def build_outsource_internal_pdf(ticket: dict, outsource: dict, created_by: str 
 
     # ── Device Info ───────────────────────────────────────────────────────────
     story.append(Paragraph("DEVICE", h2))
-    story.append(kv_table([
-        ("Brand / Model", f"{ticket.get('device_brand', '')} {ticket.get('device_model', '')}".strip() or "—"),
-        ("Serial No.",    ticket.get("device_serial") or ticket.get("device_id") or "—"),
-    ]))
+    devices = ticket.get("devices") or []
+    if len(devices) > 1:
+        data = [[
+            Paragraph("<b>#</b>", small),
+            Paragraph("<b>Brand / Model</b>", small),
+            Paragraph("<b>Serial No.</b>", small),
+            Paragraph("<b>Device ID</b>", small),
+        ]]
+        for idx, item in enumerate(devices, 1):
+            data.append([
+                Paragraph(str(idx), body),
+                Paragraph(f"{item.get('brand', '')} {item.get('model', '')}".strip() or "—", body),
+                Paragraph(item.get("serial_number") or "—", body),
+                Paragraph(item.get("device_id") or "—", body),
+            ])
+        t = Table(data, colWidths=[10 * mm, 70 * mm, 50 * mm, 50 * mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
+            ("GRID", (0, 0), (-1, -1), 0.25, BORDER),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(t)
+    else:
+        primary = devices[0] if devices else {}
+        story.append(kv_table([
+            (
+                "Brand / Model",
+                f"{primary.get('brand') or ticket.get('device_brand', '')} {primary.get('model') or ticket.get('device_model', '')}".strip() or "—",
+            ),
+            (
+                "Serial No.",
+                primary.get("serial_number") or ticket.get("device_serial") or ticket.get("device_id") or "—",
+            ),
+        ]))
     story.append(Spacer(1, 16))
 
     # ── Signature block ───────────────────────────────────────────────────────

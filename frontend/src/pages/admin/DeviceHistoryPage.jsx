@@ -4,6 +4,7 @@ import {
   ChevronLeft, ChevronRight, Search,
 } from "lucide-react";
 import { api, formatError } from "../../lib/api";
+import { useAuth } from "../../lib/auth";
 import { Card } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Button } from "../../components/ui/button";
@@ -28,6 +29,8 @@ function isoToday() {
 }
 
 export default function DeviceHistoryPage() {
+  const { user } = useAuth();
+  const canManageHistory = ["admin", "sub_admin"].includes(user?.role);
   // Filters (default: last 30 days)
   const [company, setCompany] = useState("");
   const [startDate, setStartDate] = useState(isoDaysAgo(30));
@@ -265,17 +268,19 @@ export default function DeviceHistoryPage() {
               data-testid="device-history-search-input"
             />
           </div>
-          <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer select-none"
-                 data-testid="device-history-show-deleted-label">
-            <input
-              type="checkbox"
-              checked={showDeleted}
-              onChange={(e) => setShowDeleted(e.target.checked)}
-              className="rounded border-slate-300"
-              data-testid="device-history-show-deleted-toggle"
-            />
-            Show deleted records
-          </label>
+          {canManageHistory && (
+            <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer select-none"
+                   data-testid="device-history-show-deleted-label">
+              <input
+                type="checkbox"
+                checked={showDeleted}
+                onChange={(e) => setShowDeleted(e.target.checked)}
+                className="rounded border-slate-300"
+                data-testid="device-history-show-deleted-toggle"
+              />
+              Show deleted records
+            </label>
+          )}
         </div>
         <div className="text-xs text-slate-500" data-testid="device-history-summary">
           Showing <b>{pageRows.length}</b> of <b>{total}</b> records
@@ -297,7 +302,7 @@ export default function DeviceHistoryPage() {
                 <th className="p-3 font-bold">Closed</th>
                 <th className="p-3 font-bold">Product Ref #</th>
                 <th className="p-3 font-bold">OEM Ref #</th>
-                <th className="p-3 font-bold text-right">Actions</th>
+                {canManageHistory && <th className="p-3 font-bold text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -316,43 +321,45 @@ export default function DeviceHistoryPage() {
                   <td className="p-3 text-xs text-slate-600 whitespace-nowrap">{r.closed_date || "—"}</td>
                   <td className="p-3 font-mono text-xs">{r.product_reference_number || "—"}</td>
                   <td className="p-3 font-mono text-xs">{r.oem_reference_number || "—"}</td>
-                  <td className="p-3 text-right">
-                    <div className="flex gap-1.5 justify-end">
-                      {showDeleted && r._deleted ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-8 gap-1.5 text-xs"
-                          onClick={() => restore(r)}
-                          data-testid={`device-history-restore-btn-${r.id}`}
-                        >
-                          <ArchiveRestore className="w-3.5 h-3.5" /> Restore
-                        </Button>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-8 gap-1.5 text-xs text-red-600 border-red-200 hover:bg-red-50"
-                          onClick={() => setConfirmRow(r)}
-                          data-testid={`device-history-delete-btn-${r.id}`}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" /> Delete
-                        </Button>
-                      )}
-                    </div>
-                  </td>
+                  {canManageHistory && (
+                    <td className="p-3 text-right">
+                      <div className="flex gap-1.5 justify-end">
+                        {showDeleted && r._deleted ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1.5 text-xs"
+                            onClick={() => restore(r)}
+                            data-testid={`device-history-restore-btn-${r.id}`}
+                          >
+                            <ArchiveRestore className="w-3.5 h-3.5" /> Restore
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1.5 text-xs text-red-600 border-red-200 hover:bg-red-50"
+                            onClick={() => setConfirmRow(r)}
+                            data-testid={`device-history-delete-btn-${r.id}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" /> Delete
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
               {!loading && pageRows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="p-10 text-center text-slate-500" data-testid="device-history-empty">
+                  <td colSpan={canManageHistory ? 10 : 9} className="p-10 text-center text-slate-500" data-testid="device-history-empty">
                     No records found for the selected filters.
                   </td>
                 </tr>
               )}
               {loading && (
                 <tr>
-                  <td colSpan={10} className="p-10 text-center text-slate-500">Loading…</td>
+                  <td colSpan={canManageHistory ? 10 : 9} className="p-10 text-center text-slate-500">Loading…</td>
                 </tr>
               )}
             </tbody>

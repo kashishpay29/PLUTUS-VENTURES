@@ -35,7 +35,7 @@ from slowapi.errors import RateLimitExceeded
 from auth import (
     hash_password, verify_password, create_access_token,
     get_current_user, require_admin, require_engineer, require_sub_admin,
-    decode_token,
+    require_admin_console, require_ticket_operator, decode_token,
 )
 from storage_client import init_storage, put_object, get_object
 from pdf_gen import build_service_report_pdf, build_outsource_internal_pdf
@@ -118,13 +118,14 @@ def send_ticket_email(to_email: str, ticket: dict, pdf_bytes: bytes = None,
         msg["Subject"] = subject
 
         status = ticket.get("status", "").replace("_", " ").title()
+        device_label = ", ".join(_ticket_device_ids(ticket)) or ticket.get("device_id", "—")
         body = f"""
 Dear Customer,
 Your service ticket <b>{ticket_no}</b> has been <b>{status}</b>.
 <b>Details:</b>
 - Ticket: {ticket_no}
 - Status: {status}
-- Device: {ticket.get("device_id", "—")}
+- Device: {device_label}
 - Issue: {ticket.get("issue_description") or ticket.get("problem_description", "—")}
 {"Please find the service report attached." if pdf_bytes else ""}
 Thank you for choosing Plutus Ventures.
@@ -453,7 +454,8 @@ class TicketCreate(BaseModel):
     priority: Literal["low", "medium", "high", "critical"] = "medium"
     product_reference_number: Optional[str] = None
     oem_reference_number: Optional[str] = None
-    device: DeviceCreate
+    device: Optional[DeviceCreate] = None
+    devices: Optional[List[DeviceCreate]] = None
 
 class TicketAssign(BaseModel):
     engineer_id: Optional[str] = None
@@ -945,6 +947,20 @@ class AdminCreate(BaseModel):
     password: str
     designation: Optional[str] = None
 
+class TicketAdminCreate(BaseModel):
+    name: str
+    email: EmailStr
+    phone: Optional[str] = None
+    password: str
+    designation: Optional[str] = None
+
+class TicketAdminUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    password: Optional[str] = None
+    designation: Optional[str] = None
+    is_active: Optional[bool] = None
+
 @api.get("/admins", dependencies=[Depends(require_admin)])
 async def list_admins():
     items = list(db.users.find({"role": "admin"}, {"_id": 0, "password_hash": 0}).sort("created_at", -1))
@@ -978,6 +994,66 @@ async def delete_admin(admin_id: str):
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Admin not found")
     return {"status": "deleted"}
+
+# ---------- TICKET ADMINS ----------
+@api.get("/ticket-admins", dependencies=[Depends(require_admin)])
+async def list_ticket_admins(q: Optional[str] = None):
+    query: Dict[str, Any] = {"role": "ticket_admin"}
+    if q:
+        query["$or"] = [
+            {"name": {"$regex": q, "$options": "i"}},
+            {"email": {"$regex": q, "$options": "i"}},
+        ]
+    items = list(db.users.find(query, {"_id": 0, "password_hash": 0}).sort("created_at", -1))
+    return {"items": items, "total": len(items)}
+
+@api.post("/ticket-admins", dependencies=[Depends(require_admin)])
+async def create_ticket_admin(payload: TicketAdminCreate):
+    email = payload.email.lower().strip()
+    if db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already exists")
+    doc = {
+        "id": new_id(),
+        "name": payload.name,
+        "email": email,
+        "phone": payload.phone,
+        "designation": payload.designation or "Ticket Admin",
+        "role": "ticket_admin",
+        "password_hash": hash_password(payload.password),
+        "is_active": True,
+        "is_available": True,
+        "status": "active",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    db.users.insert_one(doc)
+    return clean({**doc})
+
+@api.patch("/ticket-admins/{ticket_admin_id}", dependencies=[Depends(require_admin)])
+async def update_ticket_admin(ticket_admin_id: str, payload: TicketAdminUpdate):
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if "password" in updates:
+        updates["password_hash"] = hash_password(updates.pop("password"))
+    updates["updated_at"] = now_iso()
+    if len(updates) == 1:
+        raise HTTPException(status_code=400, detail="No changes provided")
+    res = db.users.update_one(
+        {"id": ticket_admin_id, "role": "ticket_admin"},
+        {"$set": updates},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Ticket admin not found")
+    return clean(db.users.find_one(
+        {"id": ticket_admin_id},
+        {"_id": 0, "password_hash": 0},
+    ))
+
+@api.delete("/ticket-admins/{ticket_admin_id}", dependencies=[Depends(require_admin)])
+async def delete_ticket_admin(ticket_admin_id: str):
+    res = db.users.delete_one({"id": ticket_admin_id, "role": "ticket_admin"})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Ticket admin not found")
+    return {"ok": True}
 
 # ---------- SUB-ADMINS ----------
 class SubAdminCreate(BaseModel):
@@ -1312,7 +1388,11 @@ async def export_device_history(
         ticket_filter.setdefault("created_at", {})["$lte"] = f"{month_to}-{last_day}"
 
     tickets = list(db.tickets.find(ticket_filter, {"_id": 0}).sort("created_at", -1).limit(1000))
-    device_ids = list({t.get("device_id") for t in tickets if t.get("device_id")})
+    device_ids = list({
+        dev_id
+        for t in tickets
+        for dev_id in _ticket_device_ids(t)
+    })
     company_ids = list({t.get("company_id") for t in tickets if t.get("company_id")})
     eng_ids = list({t.get("assigned_engineer_id") for t in tickets if t.get("assigned_engineer_id")})
 
@@ -1335,12 +1415,16 @@ async def export_device_history(
         cell.alignment = Alignment(horizontal="center")
 
     for row, t in enumerate(tickets, 2):
-        dev = devices_map.get(t.get("device_id"), {})
+        ticket_devices = [
+            devices_map[dev_id]
+            for dev_id in _ticket_device_ids(t)
+            if dev_id in devices_map
+        ]
         ws.cell(row=row, column=1, value=t.get("ticket_no") or t.get("ticket_number"))
-        ws.cell(row=row, column=2, value=t.get("device_id"))
-        ws.cell(row=row, column=3, value=dev.get("brand"))
-        ws.cell(row=row, column=4, value=dev.get("model"))
-        ws.cell(row=row, column=5, value=dev.get("serial_number"))
+        ws.cell(row=row, column=2, value=", ".join([d.get("device_id", "") for d in ticket_devices]) or t.get("device_id"))
+        ws.cell(row=row, column=3, value=", ".join([d.get("brand", "") for d in ticket_devices]))
+        ws.cell(row=row, column=4, value=", ".join([d.get("model", "") for d in ticket_devices]))
+        ws.cell(row=row, column=5, value=", ".join([d.get("serial_number", "") for d in ticket_devices if d.get("serial_number")]))
         ws.cell(row=row, column=6, value=companies_map.get(t.get("company_id"), {}).get("company_name"))
         ws.cell(row=row, column=7, value=engineers_map.get(t.get("assigned_engineer_id")))
         ws.cell(row=row, column=8, value=t.get("status"))
@@ -1407,7 +1491,7 @@ def _enrich_history_rows(tickets: List[dict]) -> List[dict]:
     for t in tickets:
         rows.append({
             "id": t.get("id"),
-            "device_id": t.get("device_id"),
+            "device_id": ", ".join(_ticket_device_ids(t)) or t.get("device_id"),
             "ticket_id": t.get("ticket_no") or t.get("ticket_number") or t.get("id"),
             "company_name": t.get("company_name", "—"),
             "engineer_name": t.get("assigned_engineer_name", "—"),
@@ -1432,9 +1516,12 @@ async def list_device_history(
     only_deleted: bool = False,
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=500),
-    user=Depends(require_sub_admin),
+    user=Depends(require_ticket_operator),
 ):
     """List device service history with pagination."""
+    if user.get("role") == "ticket_admin":
+        include_deleted = False
+        only_deleted = False
     q = _build_device_history_query(company, start_date, end_date,
                                     include_deleted=include_deleted,
                                     only_deleted=only_deleted)
@@ -1470,6 +1557,7 @@ async def list_device_history(
                         "customer_company": 1,
                         "priority": 1,
                         "device_id": 1,
+                        "device_ids": 1,
                         "status": 1,
                         "assigned_engineer_id": 1,
                         "assigned_engineer_name": 1,
@@ -1501,9 +1589,12 @@ async def filter_device_history(
     only_deleted: bool = False,
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=500),
-    user=Depends(require_sub_admin),
+    user=Depends(require_ticket_operator),
 ):
     """Filter device history by company and date range with pagination."""
+    if user.get("role") == "ticket_admin":
+        include_deleted = False
+        only_deleted = False
     q = _build_device_history_query(company, start_date, end_date,
                                     include_deleted=include_deleted,
                                     only_deleted=only_deleted)
@@ -1530,10 +1621,17 @@ async def filter_device_history(
                         "_id": 0,
                         "id": 1,
                         "device_id": 1,
+                        "device_ids": 1,
+                        "device_count": 1,
                         "ticket_no": 1,
                         "ticket_number": 1,
+                        "customer_name": 1,
+                        "customer_phone": 1,
+                        "customer_company": 1,
+                        "created_by": 1,
                         "company_name": 1,
                         "assigned_engineer_name": 1,
+                        "assigned_engineer_id": 1,
                         "status": 1,
                         "created_at": 1,
                         "approved_at": 1,
@@ -1562,7 +1660,7 @@ async def export_device_history_v2(
     company: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    user=Depends(require_sub_admin),
+    user=Depends(require_ticket_operator),
 ):
     """Export filtered device history to Excel (.xlsx).
 
@@ -1705,7 +1803,8 @@ async def get_device(device_id: str, user=Depends(get_current_user)):
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     tickets = list(db.tickets.find(
-        {"device_id": device_id}, {"_id": 0}
+        {"$or": [{"device_id": device_id}, {"device_ids": device_id}]},
+        {"_id": 0}
     ).sort("created_at", -1).limit(100))
     for t in tickets:
         if t.get("assigned_engineer_id"):
@@ -1764,6 +1863,42 @@ def _get_or_create_device(company: dict, d: DeviceCreate) -> dict:
     doc.pop("_id", None)
     return doc
 
+def _ticket_device_ids(ticket: dict) -> List[str]:
+    ids: List[str] = []
+    raw_ids = ticket.get("device_ids")
+    if isinstance(raw_ids, list):
+        ids.extend([dev_id for dev_id in raw_ids if dev_id])
+    if ticket.get("device_id"):
+        ids.append(ticket["device_id"])
+    seen = set()
+    ordered_ids = []
+    for dev_id in ids:
+        if dev_id not in seen:
+            ordered_ids.append(dev_id)
+            seen.add(dev_id)
+    return ordered_ids
+
+def _fetch_ticket_devices(ticket: dict) -> List[dict]:
+    device_ids = _ticket_device_ids(ticket)
+    if not device_ids:
+        return []
+    devices_map = {
+        d["device_id"]: d
+        for d in db.devices.find({"device_id": {"$in": device_ids}}, {"_id": 0})
+    }
+    return [devices_map[dev_id] for dev_id in device_ids if dev_id in devices_map]
+
+def _attach_ticket_devices(ticket: dict, devices_map: Dict[str, dict]) -> None:
+    devices = [
+        devices_map[dev_id]
+        for dev_id in _ticket_device_ids(ticket)
+        if dev_id in devices_map
+    ]
+    if devices:
+        ticket["devices"] = devices
+        ticket["device"] = devices[0]
+        ticket["device_count"] = len(devices)
+
 def _log_status(ticket_id: str, actor: dict, old_status: Optional[str],
                 new_status: str, remarks: Optional[str] = None):
     db.ticket_status_logs.insert_one({
@@ -1783,7 +1918,7 @@ def _ticket_full(ticket: dict) -> dict:
         return ticket
     ticket = clean(ticket)
 
-    device_ids = [ticket.get("device_id")] if ticket.get("device_id") else []
+    device_ids = _ticket_device_ids(ticket)
     company_ids = [ticket.get("company_id")] if ticket.get("company_id") else []
     user_ids = []
     if ticket.get("assigned_engineer_id"):
@@ -1792,9 +1927,11 @@ def _ticket_full(ticket: dict) -> dict:
         user_ids.append(ticket["created_by"])
 
     if device_ids:
-        devices = list(db.devices.find({"device_id": {"$in": device_ids}}, {"_id": 0}))
-        if devices:
-            ticket["device"] = devices[0]
+        devices_map = {
+            d["device_id"]: d
+            for d in db.devices.find({"device_id": {"$in": device_ids}}, {"_id": 0})
+        }
+        _attach_ticket_devices(ticket, devices_map)
 
     if company_ids:
         companies = list(db.companies.find({"id": {"$in": company_ids}}, {"_id": 0}))
@@ -1814,19 +1951,35 @@ def _ticket_full(ticket: dict) -> dict:
     return ticket
 
 @api.post("/tickets")
-async def create_ticket(payload: TicketCreate, admin=Depends(require_sub_admin)):
+async def create_ticket(payload: TicketCreate, admin=Depends(require_ticket_operator)):
     company = db.companies.find_one({"id": payload.company_id})
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
     if company.get("status") == "inactive":
         raise HTTPException(status_code=400, detail="Company is inactive")
 
-    if admin.get("role") == "sub_admin":
-        company_ids = admin.get("assigned_company_ids") or []
-        if payload.company_id not in company_ids:
-            raise HTTPException(status_code=403, detail="Not authorized to create tickets for this company")
+    requested_devices = payload.devices or ([payload.device] if payload.device else [])
+    if not requested_devices:
+        raise HTTPException(status_code=400, detail="At least one device is required")
 
-    device = _get_or_create_device(company, payload.device)
+    devices = []
+    seen_device_ids = set()
+    for requested_device in requested_devices:
+        device_doc = _get_or_create_device(company, requested_device)
+        if device_doc["device_id"] in seen_device_ids:
+            continue
+        devices.append(device_doc)
+        seen_device_ids.add(device_doc["device_id"])
+    if not devices:
+        raise HTTPException(status_code=400, detail="At least one device is required")
+
+    primary_device = devices[0]
+    device_ids = [device["device_id"] for device in devices]
+    serial_numbers = [
+        device.get("serial_number")
+        for device in devices
+        if device.get("serial_number")
+    ]
     ticket_no = next_ticket_number()
     ticket = {
         "id": new_id(),
@@ -1845,9 +1998,16 @@ async def create_ticket(payload: TicketCreate, admin=Depends(require_sub_admin))
         "priority": payload.priority,
         "product_reference_number": (payload.product_reference_number or None),
         "oem_reference_number": (payload.oem_reference_number or None),
-        "device_id": device["device_id"],
-        "device_name": device.get("device_name"),
-        "serial_number": device.get("serial_number"),
+        "device_id": primary_device["device_id"],
+        "device_ids": device_ids,
+        "device_count": len(devices),
+        "device_name": primary_device.get("device_name"),
+        "device_names": [device.get("device_name") for device in devices],
+        "device_brand": primary_device.get("brand"),
+        "device_model": primary_device.get("model"),
+        "device_serial": primary_device.get("serial_number"),
+        "serial_number": primary_device.get("serial_number"),
+        "serial_numbers": serial_numbers,
         "status": "open",
         "assigned_engineer_id": None,
         "assigned_engineer_name": None,
@@ -1887,6 +2047,11 @@ async def list_tickets(
         q["assigned_engineer_id"] = user["id"]
     if user["role"] == "sub_admin":
         q.update(_sub_admin_ticket_scope(user))
+    if user["role"] == "ticket_admin":
+        if status in ("closed", "rejected"):
+            q["status"] = "__not_allowed__"
+        elif not status:
+            q["status"] = {"$nin": ["closed", "rejected"]}
 
     skip = (page - 1) * per_page
 
@@ -1904,10 +2069,17 @@ async def list_tickets(
                         "_id": 0,
                         "id": 1,
                         "device_id": 1,
+                        "device_ids": 1,
+                        "device_count": 1,
                         "ticket_no": 1,
                         "ticket_number": 1,
+                        "customer_name": 1,
+                        "customer_phone": 1,
+                        "customer_company": 1,
+                        "created_by": 1,
                         "company_name": 1,
                         "assigned_engineer_name": 1,
+                        "assigned_engineer_id": 1,
                         "status": 1,
                         "created_at": 1,
                         "approved_at": 1,
@@ -1929,24 +2101,43 @@ async def list_tickets(
         total = 0
         tickets = []
 
-    device_ids = list({t.get("device_id") for t in tickets if t.get("device_id")})
-    eng_ids = list({t.get("assigned_engineer_id") for t in tickets if t.get("assigned_engineer_id")})
+    device_ids = list({
+        dev_id
+        for t in tickets
+        for dev_id in _ticket_device_ids(t)
+    })
+    user_ids = list({
+        user_id
+        for t in tickets
+        for user_id in (t.get("assigned_engineer_id"), t.get("created_by"))
+        if user_id
+    })
 
     devices_map = {d["device_id"]: d for d in db.devices.find(
         {"device_id": {"$in": device_ids}},
-        {"_id": 0, "brand": 1, "model": 1, "device_id": 1, "warranty_status": 1, "device_name": 1}
+        {
+            "_id": 0,
+            "brand": 1,
+            "model": 1,
+            "device_id": 1,
+            "warranty_status": 1,
+            "warranty_expiry": 1,
+            "device_name": 1,
+            "serial_number": 1,
+        }
     )} if device_ids else {}
 
-    engineers_map = {e["id"]: e for e in db.users.find(
-        {"id": {"$in": eng_ids}},
-        {"_id": 0, "name": 1, "id": 1, "is_remote": 1}
-    )} if eng_ids else {}
+    users_map = {e["id"]: e for e in db.users.find(
+        {"id": {"$in": user_ids}},
+        {"_id": 0, "name": 1, "id": 1, "role": 1, "is_remote": 1}
+    )} if user_ids else {}
 
     for t in tickets:
-        if t.get("device_id"):
-            t["device"] = devices_map.get(t["device_id"])
+        _attach_ticket_devices(t, devices_map)
         if t.get("assigned_engineer_id"):
-            t["engineer"] = engineers_map.get(t["assigned_engineer_id"])
+            t["engineer"] = users_map.get(t["assigned_engineer_id"])
+        if t.get("created_by"):
+            t["created_by_user"] = users_map.get(t["created_by"])
 
     return {"items": tickets, "total": total, "page": page, "per_page": per_page}
 
@@ -1974,25 +2165,37 @@ async def get_ticket(ticket_id: str, user=Depends(get_current_user)):
     if full.get("report_id"):
         rep = db.service_reports.find_one({"id": full["report_id"]}, {"_id": 0})
         full["report"] = rep
-    if full.get("device_id"):
+    full_device_ids = _ticket_device_ids(full)
+    if full_device_ids:
         history = list(db.tickets.find(
-            {"device_id": full["device_id"], "id": {"$ne": ticket_id}},
+            {
+                "id": {"$ne": ticket_id},
+                "$or": [
+                    {"device_id": {"$in": full_device_ids}},
+                    {"device_ids": {"$in": full_device_ids}},
+                ],
+            },
             {"_id": 0, "ticket_no": 1, "ticket_number": 1, "status": 1,
              "created_at": 1, "issue_description": 1, "problem_description": 1,
-             "assigned_engineer_id": 1}
+             "assigned_engineer_id": 1, "device_id": 1, "device_ids": 1}
         ).sort("created_at", -1).limit(20))
         full["device_history"] = history
     return full
 
 @api.post("/tickets/{ticket_id}/assign")
 async def assign_ticket(ticket_id: str, payload: TicketAssign,
-                        admin=Depends(require_sub_admin)):
+                        admin=Depends(require_ticket_operator)):
     ticket = db.tickets.find_one({"id": ticket_id})
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
     old_status = ticket["status"]
 
+    if admin.get("role") == "ticket_admin" and ticket.get("status") in ("closed", "rejected"):
+        raise HTTPException(status_code=403, detail="Ticket admins can only reassign active tickets")
+
     if payload.is_outsource:
+        if admin.get("role") == "ticket_admin":
+            raise HTTPException(status_code=403, detail="Ticket admins can only assign internal engineers")
         if not payload.outsource_name:
             raise HTTPException(status_code=400, detail="Outsource engineer name required")
         db.tickets.update_one({"id": ticket_id}, {"$set": {
@@ -2080,7 +2283,8 @@ async def outsource_internal_pdf(ticket_id: str, auth: Optional[str] = None,
     outsource = ticket.get("outsource") or {}
     creator = db.users.find_one({"id": ticket.get("created_by")}, {"_id": 0, "name": 1})
     created_by = creator.get("name", "") if creator else ""
-    pdf_bytes = build_outsource_internal_pdf(ticket, outsource, created_by)
+    ticket_for_pdf = {**ticket, "devices": _fetch_ticket_devices(ticket)}
+    pdf_bytes = build_outsource_internal_pdf(ticket_for_pdf, outsource, created_by)
     filename = f"Outsource-Internal-{ticket.get('ticket_no', ticket_id)}.pdf"
     return Response(
         content=pdf_bytes,
@@ -2096,7 +2300,8 @@ async def create_service_report(ticket_id: str, payload: ServiceReportCreate,
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    device   = db.devices.find_one({"device_id": ticket.get("device_id")}, {"_id": 0}) or {}
+    devices = _fetch_ticket_devices(ticket)
+    device = devices[0] if devices else {}
     company  = db.companies.find_one({"id": ticket.get("company_id")}, {"_id": 0}) if ticket.get("company_id") else None
     outsource = ticket.get("outsource") or {}
 
@@ -2132,7 +2337,12 @@ async def create_service_report(ticket_id: str, payload: ServiceReportCreate,
         "photos_after": [],
     }
 
-    ticket_for_pdf = {**ticket, "report_id": report_id, "company": company}
+    ticket_for_pdf = {
+        **ticket,
+        "report_id": report_id,
+        "company": company,
+        "devices": devices,
+    }
     pdf_bytes = build_service_report_pdf(
         ticket=ticket_for_pdf, device=device,
         engineer=engineer_info, report=report,
@@ -2246,9 +2456,8 @@ async def submit_report(ticket_id: str, payload: ReportSubmit,
                 "completed_with_signature",
                 "Customer signature captured")
 
-    device = db.devices.find_one(
-        {"device_id": ticket.get("device_id")}, {"_id": 0}
-    )
+    devices = _fetch_ticket_devices(ticket)
+    device = devices[0] if devices else {}
     company = db.companies.find_one(
         {"id": ticket.get("company_id")}, {"_id": 0}
     ) if ticket.get("company_id") else None
@@ -2282,7 +2491,12 @@ async def submit_report(ticket_id: str, payload: ReportSubmit,
 
     pdf_path = None
     try:
-        ticket_for_pdf = {**ticket, "report_id": report_id, "company": company}
+        ticket_for_pdf = {
+            **ticket,
+            "report_id": report_id,
+            "company": company,
+            "devices": devices,
+        }
         pdf_bytes = build_service_report_pdf(
             ticket=ticket_for_pdf, device=device,
             engineer=engineer, report=report,
@@ -2617,7 +2831,7 @@ async def attendance_history(user=Depends(require_engineer)):
     return docs
 
 # ---------- DASHBOARD ----------
-@api.get("/dashboard/admin", dependencies=[Depends(require_sub_admin)])
+@api.get("/dashboard/admin", dependencies=[Depends(require_admin_console)])
 async def admin_dashboard(user=Depends(get_current_user)):
     cache_key = _cache_key("dashboard-admin", user)
     cached = _cache_get(cache_key)
@@ -2631,6 +2845,8 @@ async def admin_dashboard(user=Depends(get_current_user)):
             assigned_company_ids = user.get("assigned_company_ids") or []
             company_scope = _sub_admin_ticket_scope(user)
         ticket_scope = {"is_deleted": {"$ne": True}, **company_scope}
+        if user.get("role") == "ticket_admin":
+            ticket_scope["status"] = {"$nin": ["closed", "rejected"]}
 
         # ---- Ticket counts (ONE QUERY instead of MANY) ----
         ticket_counts_raw = list(db.tickets.aggregate([
@@ -2700,11 +2916,14 @@ async def admin_dashboard(user=Depends(get_current_user)):
         total_co = db.companies.count_documents(company_query)
 
         # ---- Recent activity (LIMITED) ----
-        if user.get("role") == "sub_admin":
+        if user.get("role") in ("sub_admin", "ticket_admin"):
             ticket_ids = [t["id"] for t in db.tickets.find(ticket_scope, {"_id": 0, "id": 1})]
+            log_query = {"ticket_id": {"$in": ticket_ids}}
+            if user.get("role") == "sub_admin":
+                log_query = {"$or": [log_query, {"target_user_id": user["id"]}]}
             logs = list(
                 db.ticket_status_logs
-                .find({"$or": [{"ticket_id": {"$in": ticket_ids}}, {"target_user_id": user["id"]}]}, {"_id": 0})
+                .find(log_query, {"_id": 0})
                 .sort("timestamp", -1)
                 .limit(5)
             )
@@ -2810,17 +3029,22 @@ async def engineer_dashboard(user=Depends(require_engineer)):
             "status": 1,
             "created_at": 1,
             "device_id": 1,
+            "device_ids": 1,
+            "device_count": 1,
         },
     ).sort("created_at", -1).limit(20))
 
-    device_ids = list({t.get("device_id") for t in active_tickets if t.get("device_id")})
+    device_ids = list({
+        dev_id
+        for t in active_tickets
+        for dev_id in _ticket_device_ids(t)
+    })
     devices_map = {d["device_id"]: d for d in db.devices.find(
         {"device_id": {"$in": device_ids}},
         {"_id": 0, "brand": 1, "model": 1, "device_id": 1}
     )} if device_ids else {}
     for ticket in active_tickets:
-        if ticket.get("device_id"):
-            ticket["device"] = devices_map.get(ticket["device_id"])
+        _attach_ticket_devices(ticket, devices_map)
 
     if result:
         r = result[0]

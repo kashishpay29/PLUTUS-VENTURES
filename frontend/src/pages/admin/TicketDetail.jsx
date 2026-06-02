@@ -7,6 +7,7 @@ import {
   Clock, Activity, Download, BadgeCheck, Wifi, UserCheck, Pencil,
   ExternalLink, DollarSign } from "lucide-react";
 import { api, formatError, API } from "../../lib/api";
+import { useAuth } from "../../lib/auth";
 import { Input } from "../../components/ui/input";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -22,6 +23,9 @@ import LiveMap from "../../components/LiveMap";
 export default function TicketDetail() {
   const { id } = useParams();
   const nav = useNavigate();
+  const { user } = useAuth();
+  const canCloseOrReport = ["admin", "sub_admin"].includes(user?.role);
+  const canAssign = ["admin", "sub_admin", "ticket_admin"].includes(user?.role);
   const [ticket, setTicket] = useState(null);
   const [engineers, setEngineers] = useState([]);
   const [assignOpen, setAssignOpen] = useState(false);
@@ -65,6 +69,7 @@ export default function TicketDetail() {
   const assign = async () => {
     try {
       if (isOutsource) {
+        if (!canCloseOrReport) { toast.error("Only full admins can outsource tickets"); return; }
         if (!outsourceForm.name) { toast.error("Outsource engineer name required"); return; }
         await api.post(`/tickets/${id}/assign`, {
           is_outsource: true,
@@ -135,7 +140,12 @@ export default function TicketDetail() {
 
   if (!ticket) return <div className="text-slate-500">Loading…</div>;
 
-  const d = ticket.device;
+  const devices = ticket.devices?.length ? ticket.devices : (ticket.device ? [ticket.device] : []);
+  const d = devices[0] || {};
+  const deviceLabel = devices
+    .map((item) => `${item?.brand || ""} ${item?.model || ""}`.trim())
+    .filter(Boolean)
+    .join(", ");
   const report = ticket.report;
 
   return (
@@ -162,13 +172,13 @@ export default function TicketDetail() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {!ticket.engineer && (
+          {!ticket.engineer && canAssign && (
             <Button onClick={() => { setIsOutsource(false); openAssign(false); }} className="bg-navy hover:bg-navy/90 text-white rounded-md"
                     data-testid="assign-engineer-btn">
               Assign engineer
             </Button>
           )}
-          {(ticket.status === "resolved" || ticket.status === "report_generated") && !ticket.approved && (
+          {canCloseOrReport && (ticket.status === "resolved" || ticket.status === "report_generated") && !ticket.approved && (
             <Button onClick={approve} disabled={approving}
                     className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-md"
                     data-testid="approve-report-btn">
@@ -187,24 +197,46 @@ export default function TicketDetail() {
         {/* Left col – details */}
         <div className="lg:col-span-2 space-y-6">
           <Card className="p-6 rounded-md">
-            <h3 className="text-xs uppercase tracking-[0.2em] text-slate-500 font-bold mb-4">Customer & Device</h3>
+            <h3 className="text-xs uppercase tracking-[0.2em] text-slate-500 font-bold mb-4">Customer & Devices</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
               <KV icon={UserIcon} label="Customer" value={ticket.customer_name} />
               <KV icon={Phone} label="Phone" value={ticket.customer_phone} />
               <KV icon={Building2} label="Company" value={ticket.customer_company || "—"} />
               <KV label="Source" value={(ticket.contact_source || "").toUpperCase()} />
-              <KV icon={Cpu} label="Device" value={`${d?.brand || ""} ${d?.model || ""}`} />
-              <KV label="Device ID" value={<span className="font-mono">{d?.device_id}</span>} />
-              <KV label="Serial No." value={<span className="font-mono">{d?.serial_number || "—"}</span>} />
-              <KV icon={ShieldCheck} label="Warranty"
-                  value={
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold uppercase ${
-                      d?.warranty_status === "active" ? "bg-emerald-50 text-emerald-700" :
-                      d?.warranty_status === "expired" ? "bg-amber-50 text-amber-700" :
-                      "bg-slate-100 text-slate-600"
-                    }`}>{d?.warranty_status} {d?.warranty_expiry ? `• ${d.warranty_expiry}` : ""}</span>
-                  } />
             </div>
+            {devices.length > 1 ? (
+              <div className="mt-5 overflow-x-auto border border-slate-200 rounded-md">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                    <tr>
+                      <th className="p-3 text-left font-bold">Device</th>
+                      <th className="p-3 text-left font-bold">Device ID</th>
+                      <th className="p-3 text-left font-bold">Serial No.</th>
+                      <th className="p-3 text-left font-bold">Warranty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {devices.map((item, idx) => (
+                      <tr key={item.device_id || idx} className="border-t border-slate-100">
+                        <td className="p-3 font-semibold text-navy">{item.brand} {item.model}</td>
+                        <td className="p-3 font-mono text-xs">{item.device_id}</td>
+                        <td className="p-3 font-mono text-xs">{item.serial_number || "—"}</td>
+                        <td className="p-3">
+                          <WarrantyBadge device={item} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm mt-4 pt-4 border-t border-slate-200">
+                <KV icon={Cpu} label="Device" value={`${d?.brand || ""} ${d?.model || ""}`} />
+                <KV label="Device ID" value={<span className="font-mono">{d?.device_id}</span>} />
+                <KV label="Serial No." value={<span className="font-mono">{d?.serial_number || "—"}</span>} />
+                <KV icon={ShieldCheck} label="Warranty" value={<WarrantyBadge device={d} />} />
+              </div>
+            )}
           </Card>
 
           <Card className="p-6 rounded-md">
@@ -322,11 +354,13 @@ export default function TicketDetail() {
                   )}
                 </div>
               </div>
-            ) : (
+            ) : canAssign ? (
               <Button onClick={() => { setIsOutsource(false); openAssign(false); }}
                 className="w-full bg-navy hover:bg-navy/90 text-white">
                 Assign engineer
               </Button>
+            ) : (
+              <div className="text-sm text-slate-500">Unassigned</div>
             )}
 
             {/* Outsource details */}
@@ -344,15 +378,17 @@ export default function TicketDetail() {
                   </div>
                 )}
                 {ticket.outsource.notes && <div className="text-slate-500 italic mt-1">{ticket.outsource.notes}</div>}
-                <button onClick={downloadOutsourcePdf}
-                  className="mt-3 w-full flex items-center justify-center gap-1.5 text-xs font-bold text-orange-700 bg-orange-100 hover:bg-orange-200 rounded-md py-2 transition-colors">
-                  <Download className="w-3.5 h-3.5" /> Download internal PDF (accounts)
-                </button>
+                {canCloseOrReport && (
+                  <button onClick={downloadOutsourcePdf}
+                    className="mt-3 w-full flex items-center justify-center gap-1.5 text-xs font-bold text-orange-700 bg-orange-100 hover:bg-orange-200 rounded-md py-2 transition-colors">
+                    <Download className="w-3.5 h-3.5" /> Download internal PDF (accounts)
+                  </button>
+                )}
               </div>
             )}
 
             {/* Outsource complete button */}
-            {ticket.is_outsource && !["closed","report_generated"].includes(ticket.status) && (
+            {canCloseOrReport && ticket.is_outsource && !["closed","report_generated"].includes(ticket.status) && (
               <button onClick={outsourceComplete} disabled={completing}
                 className="mt-3 w-full flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-orange-500 hover:bg-orange-600 rounded-md py-2 transition-colors disabled:opacity-50">
                 {completing ? "Completing…" : "✓ Mark outsource as completed"}
@@ -360,14 +396,14 @@ export default function TicketDetail() {
             )}
 
             {/* Generate service report button */}
-            {(ticket.is_outsource || ["closed","report_generated"].includes(ticket.status)) && (
+            {canCloseOrReport && (ticket.is_outsource || ["closed","report_generated"].includes(ticket.status)) && (
               <button onClick={() => setReportOpen(true)}
                 className="mt-2 w-full flex items-center justify-center gap-1.5 text-xs font-bold text-navy border-2 border-navy hover:bg-navy hover:text-white rounded-md py-2 transition-colors">
                 <FileText className="w-3.5 h-3.5" /> Generate service report
               </button>
             )}
 
-            {(ticket.engineer || ticket.is_outsource) && (
+            {canAssign && (ticket.engineer || ticket.is_outsource) && (
               <button onClick={() => { setIsOutsource(false); openAssign(true); }}
                 className="mt-2 w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-navy hover:bg-slate-50 rounded-md py-2 border border-slate-200 transition-colors">
                 <Pencil className="w-3 h-3" /> Reassign engineer
@@ -411,10 +447,12 @@ export default function TicketDetail() {
               className={`flex-1 py-2 text-xs font-bold transition-colors ${!isOutsource ? "bg-navy text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
               Internal Engineer
             </button>
-            <button onClick={() => setIsOutsource(true)}
-              className={`flex-1 py-2 text-xs font-bold flex items-center justify-center gap-1 transition-colors ${isOutsource ? "bg-orange-500 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
-              <ExternalLink className="w-3 h-3" /> Outsource
-            </button>
+            {canCloseOrReport && (
+              <button onClick={() => setIsOutsource(true)}
+                className={`flex-1 py-2 text-xs font-bold flex items-center justify-center gap-1 transition-colors ${isOutsource ? "bg-orange-500 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
+                <ExternalLink className="w-3 h-3" /> Outsource
+              </button>
+            )}
           </div>
 
           {!isOutsource ? (
@@ -490,7 +528,7 @@ export default function TicketDetail() {
             <div className="p-3 rounded-md bg-slate-50 border text-sm space-y-1">
               <div><span className="font-bold">Customer:</span> {ticket?.customer_name}</div>
               <div><span className="font-bold">Company:</span> {ticket?.company?.company_name || ticket?.customer_company || "—"}</div>
-              <div><span className="font-bold">Device:</span> {ticket?.device?.brand} {ticket?.device?.model}</div>
+              <div><span className="font-bold">Device:</span> {deviceLabel || "—"}</div>
               <div><span className="font-bold">Problem:</span> {ticket?.problem_description}</div>
               {ticket?.is_outsource && ticket?.outsource && (
                 <div className="mt-2 pt-2 border-t">
@@ -540,6 +578,18 @@ function KV({ icon: Icon, label, value }) {
       </div>
       <div className="mt-0.5 text-navy">{value}</div>
     </div>
+  );
+}
+
+function WarrantyBadge({ device }) {
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold uppercase ${
+      device?.warranty_status === "active" ? "bg-emerald-50 text-emerald-700" :
+      device?.warranty_status === "expired" ? "bg-amber-50 text-amber-700" :
+      "bg-slate-100 text-slate-600"
+    }`}>
+      {device?.warranty_status || "none"} {device?.warranty_expiry ? `• ${device.warranty_expiry}` : ""}
+    </span>
   );
 }
 

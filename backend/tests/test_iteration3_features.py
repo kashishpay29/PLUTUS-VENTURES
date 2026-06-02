@@ -55,6 +55,62 @@ def company_id(auth):
     assert cid, f"no id in company response: {r.json()}"
     return cid
 
+@pytest.fixture
+def sub_admin_auth(auth):
+    """Create a sub-admin with no company assignments and return an auth session."""
+    email = f"subadmin_{uuid.uuid4().hex[:8]}@example.com"
+    password = "pass1234"
+    r = auth.post(f"{API}/sub-admins", json={
+        "name": "QA Sub Admin",
+        "email": email,
+        "password": password,
+    })
+    assert r.status_code in (200, 201), f"sub-admin create failed: {r.status_code} {r.text}"
+    assert r.json().get("assigned_company_ids") in ([], None)
+
+    login = requests.post(
+        f"{API}/auth/login",
+        json={"email": email, "password": password},
+        timeout=10,
+    )
+    assert login.status_code == 200, f"sub-admin login failed: {login.status_code} {login.text}"
+    token = login.json().get("token")
+    assert token, f"sub-admin login response missing token: {login.json()}"
+    s = requests.Session()
+    s.headers.update({
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    })
+    return s
+
+@pytest.fixture
+def ticket_admin_auth(auth):
+    """Create a limited ticket admin and return an auth session."""
+    email = f"ticketadmin_{uuid.uuid4().hex[:8]}@example.com"
+    password = "pass1234"
+    r = auth.post(f"{API}/ticket-admins", json={
+        "name": "QA Ticket Admin",
+        "email": email,
+        "password": password,
+    })
+    assert r.status_code in (200, 201), f"ticket-admin create failed: {r.status_code} {r.text}"
+    assert r.json().get("role") == "ticket_admin"
+
+    login = requests.post(
+        f"{API}/auth/login",
+        json={"email": email, "password": password},
+        timeout=10,
+    )
+    assert login.status_code == 200, f"ticket-admin login failed: {login.status_code} {login.text}"
+    token = login.json().get("token")
+    assert token, f"ticket-admin login response missing token: {login.json()}"
+    s = requests.Session()
+    s.headers.update({
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    })
+    return s
+
 def _new_ticket_payload(company_id_val, *, customer_email="cust@example.com",
                         prod_ref="PRN-001", oem_ref="OEM-001",
                         omit_email=False, bad_email=False):
@@ -141,6 +197,84 @@ class TestTicketCreation:
         assert t.get("product_reference_number") in (None, "")
         assert t.get("oem_reference_number") in (None, "")
         assert t["customer_email"] == "cust@example.com"
+
+    def test_create_ticket_with_multiple_devices(self, auth, company_id):
+        serial_a = f"SN-{uuid.uuid4().hex[:6]}"
+        serial_b = f"SN-{uuid.uuid4().hex[:6]}"
+        payload = _new_ticket_payload(company_id)
+        payload.pop("device")
+        payload["devices"] = [
+            {
+                "brand": "Acme",
+                "model": "X1",
+                "serial_number": serial_a,
+                "warranty_status": "active",
+            },
+            {
+                "brand": "Globex",
+                "model": "Printer 200",
+                "serial_number": serial_b,
+                "device_type": "printer",
+                "warranty_status": "none",
+            },
+        ]
+        r = auth.post(f"{API}/tickets", json=payload)
+        assert r.status_code in (200, 201), r.text
+        t = r.json()
+        assert t["device_count"] == 2
+        assert len(t["device_ids"]) == 2
+        assert len(t["devices"]) == 2
+        assert t["device_id"] == t["device_ids"][0]
+        assert {d["serial_number"] for d in t["devices"]} == {serial_a, serial_b}
+
+        g = auth.get(f"{API}/tickets/{t['id']}")
+        assert g.status_code == 200, g.text
+        gt = g.json()
+        assert gt["device_count"] == 2
+        assert len(gt["devices"]) == 2
+        assert {d["model"] for d in gt["devices"]} == {"X1", "Printer 200"}
+
+    def test_sub_admin_can_create_ticket_for_any_active_company(self, sub_admin_auth, company_id):
+        payload = _new_ticket_payload(company_id, customer_email="subadmin@example.com")
+        r = sub_admin_auth.post(f"{API}/tickets", json=payload)
+        assert r.status_code in (200, 201), r.text
+        t = r.json()
+        assert t["company_id"] == company_id
+        assert t["customer_email"] == "subadmin@example.com"
+
+    def test_ticket_admin_limited_ticket_permissions(self, auth, ticket_admin_auth, company_id):
+        payload = _new_ticket_payload(company_id, customer_email="ticketadmin@example.com")
+        r = ticket_admin_auth.post(f"{API}/tickets", json=payload)
+        assert r.status_code in (200, 201), r.text
+        ticket = r.json()
+
+        engineer_email = f"limited_eng_{uuid.uuid4().hex[:8]}@example.com"
+        eng = auth.post(f"{API}/engineers", json={
+            "name": "Limited Role Engineer",
+            "email": engineer_email,
+            "password": "pass1234",
+            "skills": [],
+        })
+        assert eng.status_code in (200, 201), eng.text
+
+        assign = ticket_admin_auth.post(
+            f"{API}/tickets/{ticket['id']}/assign",
+            json={"engineer_id": eng.json()["id"], "is_outsource": False},
+        )
+        assert assign.status_code == 200, assign.text
+        assert assign.json()["status"] == "assigned"
+
+        outsource = ticket_admin_auth.post(
+            f"{API}/tickets/{ticket['id']}/assign",
+            json={"is_outsource": True, "outsource_name": "Outside Partner"},
+        )
+        assert outsource.status_code == 403, outsource.text
+
+        approve = ticket_admin_auth.post(f"{API}/tickets/{ticket['id']}/approve")
+        assert approve.status_code == 403, approve.text
+
+        history = ticket_admin_auth.get(f"{API}/device-history")
+        assert history.status_code == 200, history.text
 
 # ---------------------------- Feature 2: Approve flow ----------------------------
 

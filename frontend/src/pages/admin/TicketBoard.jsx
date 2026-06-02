@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { getCachedJson, readCachedJson } from "../../lib/api";
+import { useAuth } from "../../lib/auth";
 import { useSmartPolling } from "../../hooks/useSmartPolling";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -28,6 +29,8 @@ const STATUS_FILTERS = [
 const TICKETS_CACHE_KEY = "admin-tickets";
 
 export default function TicketBoard() {
+  const { user } = useAuth();
+  const isTicketAdmin = user?.role === "ticket_admin";
   const [tickets, setTickets] = useState(() => {
     const cached = readCachedJson(TICKETS_CACHE_KEY, 120000);
     return Array.isArray(cached) ? cached : cached?.items || [];
@@ -35,6 +38,14 @@ export default function TicketBoard() {
   const [q, setQ] = useState("");
   const [view, setView] = useState("board");
   const [statusFilter, setStatusFilter] = useState("all");
+  const visibleColumns = useMemo(
+    () => (isTicketAdmin ? COLUMNS.filter((col) => col !== "closed") : COLUMNS),
+    [isTicketAdmin]
+  );
+  const visibleStatusFilters = useMemo(
+    () => (isTicketAdmin ? STATUS_FILTERS.filter((f) => f.value !== "closed") : STATUS_FILTERS),
+    [isTicketAdmin]
+  );
 
   const load = async () => {
     try {
@@ -66,6 +77,12 @@ export default function TicketBoard() {
         ticket.ticket_number,
         ticket.customer_name,
         ticket.device?.device_id,
+        ...(ticket.devices || []).flatMap((device) => [
+          device.device_id,
+          device.serial_number,
+          device.brand,
+          device.model,
+        ]),
         ticket.engineer?.name,
         ticket.company_name,
         ticket.customer_company,
@@ -75,12 +92,12 @@ export default function TicketBoard() {
   }, [q, statusFilter, tickets]);
 
   const ticketsByColumn = useMemo(() => {
-    const grouped = Object.fromEntries(COLUMNS.map((col) => [col, []]));
+    const grouped = Object.fromEntries(visibleColumns.map((col) => [col, []]));
     filtered.forEach((ticket) => {
       if (grouped[ticket.status]) grouped[ticket.status].push(ticket);
     });
     return grouped;
-  }, [filtered]);
+  }, [filtered, visibleColumns]);
 
   return (
     <div className="space-y-6" data-testid="admin-tickets-page">
@@ -127,7 +144,7 @@ export default function TicketBoard() {
 
       {/* Status filter chips */}
       <div className="flex flex-wrap gap-2">
-        {STATUS_FILTERS.map((f) => (
+        {visibleStatusFilters.map((f) => (
           <button
             key={f.value}
             onClick={() => setStatusFilter(f.value)}
@@ -156,7 +173,7 @@ export default function TicketBoard() {
       {view === "board" && (
         <div className="overflow-x-auto kanban-scroll -mx-4 px-4 pb-2" data-testid="ticket-kanban-board">
           <div className="flex gap-4 min-w-max">
-            {COLUMNS.map((col) => {
+            {visibleColumns.map((col) => {
               const items = ticketsByColumn[col];
               return (
                 <div key={col} className="kanban-col w-80 flex-shrink-0">
@@ -176,7 +193,7 @@ export default function TicketBoard() {
                                 data-testid={`ticket-card-${t.ticket_number}`}>
                             <div className="flex items-center justify-between mb-2">
                               <div className="font-mono font-bold text-xs text-signal">{t.ticket_number}</div>
-                              {t.device?.warranty_status === "active" && (
+                              {hasActiveWarranty(t) && (
                                 <span className="text-[10px] uppercase tracking-wide font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">
                                   Warranty
                                 </span>
@@ -184,7 +201,7 @@ export default function TicketBoard() {
                             </div>
                             <div className="font-semibold text-navy text-sm truncate">{t.customer_name}</div>
                             <div className="text-xs text-slate-500 truncate">
-                              {t.device?.brand} {t.device?.model}
+                              {deviceSummary(t)}
                             </div>
                             <div className="mt-3 flex items-center justify-between">
                               {t.engineer ? (
@@ -249,8 +266,8 @@ export default function TicketBoard() {
                     <div className="text-xs text-slate-500">{t.customer_company || t.customer_phone}</div>
                   </td>
                   <td className="p-3">
-                    <div className="font-medium">{t.device?.brand} {t.device?.model}</div>
-                    <div className="text-xs font-mono text-slate-500">{t.device?.device_id}</div>
+                    <div className="font-medium">{deviceSummary(t)}</div>
+                    <div className="text-xs font-mono text-slate-500">{deviceIdSummary(t)}</div>
                   </td>
                   <td className="p-3 text-slate-700">{t.engineer?.name || "—"}</td>
                   <td className="p-3">
@@ -259,7 +276,7 @@ export default function TicketBoard() {
                         <div className="text-sm font-semibold text-navy">{t.created_by_user.name}</div>
                         <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-full ${
                           t.created_by_user.role === "admin" ? "bg-navy/10 text-navy" : "bg-purple-100 text-purple-700"
-                        }`}>{t.created_by_user.role === "sub_admin" ? "Sub Admin" : "Admin"}</span>
+                        }`}>{creatorRoleLabel(t.created_by_user.role)}</span>
                       </div>
                     ) : <span className="text-slate-400">—</span>}
                   </td>
@@ -268,7 +285,7 @@ export default function TicketBoard() {
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td colSpan={6} className="p-8 text-center text-slate-500">No tickets found</td></tr>
+                <tr><td colSpan={7} className="p-8 text-center text-slate-500">No tickets found</td></tr>
               )}
             </tbody>
           </table>
@@ -276,4 +293,33 @@ export default function TicketBoard() {
       )}
     </div>
   );
+}
+
+function ticketDevices(ticket) {
+  return ticket.devices?.length ? ticket.devices : (ticket.device ? [ticket.device] : []);
+}
+
+function deviceSummary(ticket) {
+  const devices = ticketDevices(ticket);
+  const first = devices[0];
+  if (!first) return "—";
+  const primary = `${first.brand || ""} ${first.model || ""}`.trim() || first.device_id || "Device";
+  return devices.length > 1 ? `${primary} +${devices.length - 1} more` : primary;
+}
+
+function deviceIdSummary(ticket) {
+  const devices = ticketDevices(ticket);
+  if (!devices.length) return "—";
+  const ids = devices.map((device) => device.device_id).filter(Boolean);
+  return ids.join(", ") || "—";
+}
+
+function hasActiveWarranty(ticket) {
+  return ticketDevices(ticket).some((device) => device.warranty_status === "active");
+}
+
+function creatorRoleLabel(role) {
+  if (role === "sub_admin") return "Sub Admin";
+  if (role === "ticket_admin") return "Ticket Admin";
+  return "Admin";
 }

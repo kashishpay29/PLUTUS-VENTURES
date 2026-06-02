@@ -109,7 +109,8 @@ export default function EngineerTicketDetail() {
 
   const NEXT_STATUS = isRemote ? NEXT_STATUS_REMOTE : NEXT_STATUS_ONSITE;
   const action = NEXT_STATUS[ticket.status];
-  const d = ticket.device;
+  const devices = ticket.devices?.length ? ticket.devices : (ticket.device ? [ticket.device] : []);
+  const d = devices[0] || {};
 
   return (
     <div className="px-4 py-4 space-y-4 pb-32" data-testid="engineer-ticket-detail">
@@ -132,16 +133,30 @@ export default function EngineerTicketDetail() {
             {ticket.customer_phone}
           </a>
         } />
-        <Row icon={Cpu} label="Device" value={`${d?.brand || ""} ${d?.model || ""}`} />
-        <Row label="Device ID" value={<span className="font-mono text-xs">{d?.device_id}</span>} />
-        <Row label="Serial" value={<span className="font-mono text-xs">{d?.serial_number || "—"}</span>} />
-        <Row icon={ShieldCheck} label="Warranty" value={
-          <span className={`text-xs font-bold uppercase px-1.5 py-0.5 rounded ${
-            d?.warranty_status === "active" ? "bg-emerald-50 text-emerald-700" :
-            d?.warranty_status === "expired" ? "bg-amber-50 text-amber-700" :
-            "bg-slate-100 text-slate-600"
-          }`}>{d?.warranty_status}</span>
-        } />
+        {devices.length > 1 ? (
+          <>
+            <Row icon={Cpu} label="Devices" value={`${devices.length} devices`} />
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              {devices.map((item, idx) => (
+                <div key={item.device_id || idx} className="text-xs p-2 rounded bg-slate-50">
+                  <div className="font-semibold text-navy">{item.brand} {item.model}</div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-slate-500">
+                    <span className="font-mono">{item.device_id}</span>
+                    <span className="font-mono">SN: {item.serial_number || "—"}</span>
+                    <WarrantyBadge device={item} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <Row icon={Cpu} label="Device" value={`${d?.brand || ""} ${d?.model || ""}`} />
+            <Row label="Device ID" value={<span className="font-mono text-xs">{d?.device_id}</span>} />
+            <Row label="Serial" value={<span className="font-mono text-xs">{d?.serial_number || "—"}</span>} />
+            <Row icon={ShieldCheck} label="Warranty" value={<WarrantyBadge device={d} />} />
+          </>
+        )}
       </Card>
 
       <Card className="p-4 rounded-md">
@@ -275,6 +290,18 @@ function Row({ icon: Icon, label, value }) {
       <span className="text-xs uppercase tracking-wider text-slate-500 font-bold w-20">{label}</span>
       <span className="flex-1 text-navy">{value}</span>
     </div>
+  );
+}
+
+function WarrantyBadge({ device }) {
+  return (
+    <span className={`text-xs font-bold uppercase px-1.5 py-0.5 rounded ${
+      device?.warranty_status === "active" ? "bg-emerald-50 text-emerald-700" :
+      device?.warranty_status === "expired" ? "bg-amber-50 text-amber-700" :
+      "bg-slate-100 text-slate-600"
+    }`}>
+      {device?.warranty_status || "none"}
+    </span>
   );
 }
 
