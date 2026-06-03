@@ -58,6 +58,7 @@ export default function TicketCreate() {
     priority: "medium",
     product_reference_number: "",
     oem_reference_number: "",
+    current_address: "",
     devices: [makeDevice()],
   });
   const setF = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -184,6 +185,7 @@ export default function TicketCreate() {
     if (!form.customer_email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.customer_email)) {
       return toast.error("Please enter a valid customer email");
     }
+    if (!form.current_address?.trim()) return toast.error("Please enter the current address");
     setSaving(true);
     try {
       const devices = form.devices.map((device) => ({
@@ -205,6 +207,7 @@ export default function TicketCreate() {
         ...ticketFields,
         product_reference_number: form.product_reference_number?.trim() || null,
         oem_reference_number: form.oem_reference_number?.trim() || null,
+        current_address: form.current_address?.trim() || null,
         device: devices[0],
         devices,
       };
@@ -392,6 +395,22 @@ export default function TicketCreate() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+            </Card>
+
+            <Card className="p-6 rounded-md">
+              <h3 className="font-bold text-navy mb-4 text-sm uppercase tracking-wider">Service address</h3>
+              <div>
+                <Label className="text-xs font-bold">Current address *</Label>
+                <Textarea
+                  value={form.current_address}
+                  onChange={(e) => setF("current_address", e.target.value)}
+                  placeholder="Enter the address where the service needs to be provided…"
+                  rows={3}
+                  required
+                  className="mt-1.5"
+                  data-testid="current-address-input"
+                />
               </div>
             </Card>
 

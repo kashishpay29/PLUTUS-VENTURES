@@ -459,6 +459,7 @@ class TicketCreate(BaseModel):
     priority: Literal["low", "medium", "high", "critical"] = "medium"
     product_reference_number: Optional[str] = None
     oem_reference_number: Optional[str] = None
+    current_address: Optional[str] = None
     device: Optional[DeviceCreate] = None
     devices: Optional[List[DeviceCreate]] = None
 
@@ -1997,6 +1998,7 @@ async def create_ticket(payload: TicketCreate, admin=Depends(require_ticket_oper
         "customer_email": payload.customer_email,
         "customer_company": company["company_name"],
         "customer_address": company.get("address"),
+        "current_address": payload.current_address,
         "contact_source": payload.contact_source,
         "issue_description": payload.issue_description,
         "problem_description": payload.issue_description,
