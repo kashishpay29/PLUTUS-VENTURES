@@ -268,7 +268,8 @@ class TestTicketCreation:
             f"{API}/tickets/{ticket['id']}/assign",
             json={"is_outsource": True, "outsource_name": "Outside Partner"},
         )
-        assert outsource.status_code == 403, outsource.text
+        assert outsource.status_code == 200, outsource.text
+        assert outsource.json()["is_outsource"] is True
 
         approve = ticket_admin_auth.post(f"{API}/tickets/{ticket['id']}/approve")
         assert approve.status_code == 403, approve.text

@@ -2201,8 +2201,6 @@ async def assign_ticket(ticket_id: str, payload: TicketAssign,
         raise HTTPException(status_code=403, detail="Ticket admins can only reassign active tickets")
 
     if payload.is_outsource:
-        if admin.get("role") == "ticket_admin":
-            raise HTTPException(status_code=403, detail="Ticket admins can only assign internal engineers")
         if not payload.outsource_name:
             raise HTTPException(status_code=400, detail="Outsource engineer name required")
         db.tickets.update_one({"id": ticket_id}, {"$set": {

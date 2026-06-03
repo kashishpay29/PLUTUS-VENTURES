@@ -25,6 +25,7 @@ export default function TicketDetail() {
   const nav = useNavigate();
   const { user } = useAuth();
   const canCloseOrReport = ["admin", "sub_admin"].includes(user?.role);
+  const canOutsource = ["admin", "sub_admin", "ticket_admin"].includes(user?.role);
   const canAssign = ["admin", "sub_admin", "ticket_admin"].includes(user?.role);
   const [ticket, setTicket] = useState(null);
   const [engineers, setEngineers] = useState([]);
@@ -69,7 +70,7 @@ export default function TicketDetail() {
   const assign = async () => {
     try {
       if (isOutsource) {
-        if (!canCloseOrReport) { toast.error("Only full admins can outsource tickets"); return; }
+        if (!canOutsource) { toast.error("Only admins and ticket admins can outsource tickets"); return; }
         if (!outsourceForm.name) { toast.error("Outsource engineer name required"); return; }
         await api.post(`/tickets/${id}/assign`, {
           is_outsource: true,
@@ -173,10 +174,18 @@ export default function TicketDetail() {
         </div>
         <div className="flex flex-wrap gap-2">
           {!ticket.engineer && canAssign && (
-            <Button onClick={() => { setIsOutsource(false); openAssign(false); }} className="bg-navy hover:bg-navy/90 text-white rounded-md"
-                    data-testid="assign-engineer-btn">
-              Assign engineer
-            </Button>
+            <div className="space-y-2 sm:space-y-0 sm:flex sm:items-center sm:gap-2">
+              <Button onClick={() => { setIsOutsource(false); openAssign(false); }} className="bg-navy hover:bg-navy/90 text-white rounded-md"
+                      data-testid="assign-engineer-btn">
+                Assign engineer
+              </Button>
+              {canOutsource && (
+                <Button onClick={() => { setIsOutsource(true); openAssign(false); }} className="bg-orange-500 hover:bg-orange-600 text-white rounded-md"
+                        data-testid="outsource-engineer-btn">
+                  <ExternalLink className="w-4 h-4 mr-2" /> Outsource engineer
+                </Button>
+              )}
+            </div>
           )}
           {canCloseOrReport && (ticket.status === "resolved" || ticket.status === "report_generated") && !ticket.approved && (
             <Button onClick={approve} disabled={approving}
@@ -447,7 +456,7 @@ export default function TicketDetail() {
               className={`flex-1 py-2 text-xs font-bold transition-colors ${!isOutsource ? "bg-navy text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
               Internal Engineer
             </button>
-            {canCloseOrReport && (
+            {canOutsource && (
               <button onClick={() => setIsOutsource(true)}
                 className={`flex-1 py-2 text-xs font-bold flex items-center justify-center gap-1 transition-colors ${isOutsource ? "bg-orange-500 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
                 <ExternalLink className="w-3 h-3" /> Outsource
