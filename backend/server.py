@@ -368,8 +368,13 @@ def next_device_id() -> str:
     return f"DEV-{year}-{seq:04d}"
 
 def next_company_code() -> str:
-    seq = _seq("company")
-    return f"CMP-{seq:04d}"
+    max_retries = 100
+    for attempt in range(max_retries):
+        seq = _seq("company")
+        code = f"CMP-{seq:04d}"
+        if not db.companies.find_one({"company_code": code}):
+            return code
+    raise ValueError("Unable to generate unique company code")
 
 # ---------- Models ----------
 class LoginRequest(BaseModel):

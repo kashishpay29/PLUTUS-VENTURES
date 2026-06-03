@@ -85,17 +85,39 @@ export default function TicketCreate() {
   }, []);
 
   const createQuickCompany = async () => {
-    if (!companyForm.company_name.trim()) {
+    const name = companyForm.company_name?.trim();
+    if (!name) {
       toast.error("Company name is required");
       return;
     }
     setCreatingCompany(true);
     try {
-      const payload = { ...companyForm };
-      Object.keys(payload).forEach((k) => { if (payload[k] === "") delete payload[k]; });
+      const payload = { company_name: name };
+      if (companyForm.contact_person?.trim())
+        payload.contact_person = companyForm.contact_person.trim();
+      if (companyForm.phone?.trim())
+        payload.phone = companyForm.phone.trim();
+      if (companyForm.email?.trim()) {
+        const email = companyForm.email.trim();
+        if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          payload.email = email;
+        }
+      }
+      if (companyForm.address?.trim())
+        payload.address = companyForm.address.trim();
+      if (companyForm.gst_number?.trim())
+        payload.gst_number = companyForm.gst_number.trim();
+      if (companyForm.city?.trim())
+        payload.city = companyForm.city.trim();
+      if (companyForm.state?.trim())
+        payload.state = companyForm.state.trim();
+      if (companyForm.pincode?.trim())
+        payload.pincode = companyForm.pincode.trim();
+
       const { data } = await api.post("/companies", payload);
       setCompanies((prev) => [...prev, data]);
       setF("company_id", data.id);
+      setSelectedCompany(data);
       setShowCompanyModal(false);
       setCompanyForm({
         company_name: "", contact_person: "", phone: "", email: "",
@@ -103,7 +125,9 @@ export default function TicketCreate() {
       });
       toast.success(`Company ${data.company_code} created`);
     } catch (err) {
-      toast.error(formatError(err.response?.data?.detail) || "Failed to create company");
+      const errorMsg = err.response?.data?.detail || err.message || "Failed to create company";
+      toast.error(errorMsg);
+      console.error("Company creation error:", { status: err.response?.status, detail: err.response?.data?.detail, error: err });
     } finally {
       setCreatingCompany(false);
     }
