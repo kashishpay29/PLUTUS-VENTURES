@@ -10,6 +10,9 @@ import { Textarea } from "../../components/ui/textarea";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "../../components/ui/select";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
+} from "../../components/ui/dialog";
 import { ArrowLeft, Save, Loader2, Building2, PlusCircle, AlertCircle, Paperclip, X, ImageIcon, Search, ChevronDown, Check } from "lucide-react";
 
 export default function TicketCreate() {
@@ -28,6 +31,12 @@ export default function TicketCreate() {
   const [selectedCompany, setSelectedCompany] = useState(null);
   const [companySearch, setCompanySearch] = useState("");
   const [companyOpen, setCompanyOpen] = useState(false);
+  const [showCompanyModal, setShowCompanyModal] = useState(false);
+  const [companyForm, setCompanyForm] = useState({
+    company_name: "", contact_person: "", phone: "", email: "",
+    address: "", gst_number: "", city: "", state: "", pincode: "",
+  });
+  const [creatingCompany, setCreatingCompany] = useState(false);
 
   // Close company dropdown on outside click
   useEffect(() => {
@@ -74,6 +83,31 @@ export default function TicketCreate() {
       .then(({ data }) => setCompanies(data.items || []))
       .catch(() => {});
   }, []);
+
+  const createQuickCompany = async () => {
+    if (!companyForm.company_name.trim()) {
+      toast.error("Company name is required");
+      return;
+    }
+    setCreatingCompany(true);
+    try {
+      const payload = { ...companyForm };
+      Object.keys(payload).forEach((k) => { if (payload[k] === "") delete payload[k]; });
+      const { data } = await api.post("/companies", payload);
+      setCompanies((prev) => [...prev, data]);
+      setF("company_id", data.id);
+      setShowCompanyModal(false);
+      setCompanyForm({
+        company_name: "", contact_person: "", phone: "", email: "",
+        address: "", gst_number: "", city: "", state: "", pincode: "",
+      });
+      toast.success(`Company ${data.company_code} created`);
+    } catch (err) {
+      toast.error(formatError(err.response?.data?.detail) || "Failed to create company");
+    } finally {
+      setCreatingCompany(false);
+    }
+  };
 
   // Auto-fill customer info when company changes
   useEffect(() => {
@@ -178,12 +212,11 @@ export default function TicketCreate() {
             <div className="flex flex-col items-center text-center py-6 bg-amber-50 rounded-md border border-amber-100">
               <AlertCircle className="w-6 h-6 text-amber-600 mb-2" />
               <div className="text-sm font-semibold text-navy">No active companies yet</div>
-              <div className="text-xs text-slate-500 mt-1">Add a company before creating tickets.</div>
-              <Link to="/admin/companies/new" className="mt-3">
-                <Button type="button" className="bg-navy hover:bg-navy/90 text-white">
-                  <PlusCircle className="w-4 h-4 mr-2" /> Add company
-                </Button>
-              </Link>
+              <div className="text-xs text-slate-500 mt-1">Create a company to get started.</div>
+              <Button type="button" onClick={() => setShowCompanyModal(true)}
+                      className="mt-3 bg-navy hover:bg-navy/90 text-white">
+                <PlusCircle className="w-4 h-4 mr-2" /> Create company
+              </Button>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -518,6 +551,92 @@ export default function TicketCreate() {
           </>
         )}
       </form>
+
+      <Dialog open={showCompanyModal} onOpenChange={setShowCompanyModal}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Create new company</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="sm:col-span-2">
+              <Label className="text-xs font-bold">Company name *</Label>
+              <Input
+                value={companyForm.company_name}
+                onChange={(e) => setCompanyForm({...companyForm, company_name: e.target.value})}
+                placeholder="Enter company name"
+                className="mt-1"
+                data-testid="quick-company-name-input"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs font-bold">Contact person</Label>
+                <Input
+                  value={companyForm.contact_person}
+                  onChange={(e) => setCompanyForm({...companyForm, contact_person: e.target.value})}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label className="text-xs font-bold">Phone</Label>
+                <Input
+                  value={companyForm.phone}
+                  onChange={(e) => setCompanyForm({...companyForm, phone: e.target.value})}
+                  className="mt-1"
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs font-bold">Email</Label>
+              <Input type="email" value={companyForm.email}
+                     onChange={(e) => setCompanyForm({...companyForm, email: e.target.value})}
+                     className="mt-1" />
+            </div>
+            <div>
+              <Label className="text-xs font-bold">Address</Label>
+              <Textarea rows={2} value={companyForm.address}
+                        onChange={(e) => setCompanyForm({...companyForm, address: e.target.value})}
+                        className="mt-1" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs font-bold">City</Label>
+                <Input value={companyForm.city}
+                       onChange={(e) => setCompanyForm({...companyForm, city: e.target.value})}
+                       className="mt-1" />
+              </div>
+              <div>
+                <Label className="text-xs font-bold">State</Label>
+                <Input value={companyForm.state}
+                       onChange={(e) => setCompanyForm({...companyForm, state: e.target.value})}
+                       className="mt-1" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs font-bold">GST number</Label>
+                <Input value={companyForm.gst_number}
+                       onChange={(e) => setCompanyForm({...companyForm, gst_number: e.target.value})}
+                       className="mt-1 font-mono uppercase" />
+              </div>
+              <div>
+                <Label className="text-xs font-bold">Pincode</Label>
+                <Input value={companyForm.pincode}
+                       onChange={(e) => setCompanyForm({...companyForm, pincode: e.target.value})}
+                       className="mt-1 font-mono" />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCompanyModal(false)}>Cancel</Button>
+            <Button onClick={createQuickCompany} disabled={creatingCompany}
+                    className="bg-navy hover:bg-navy/90 text-white">
+              {creatingCompany ? <Loader2 className="w-4 h-4 animate-spin" /> :
+               <><Building2 className="w-4 h-4 mr-2" /> Create company</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

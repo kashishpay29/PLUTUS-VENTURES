@@ -83,8 +83,8 @@ export default function SubAdminsPage() {
             <tr className="text-left text-[10px] uppercase tracking-[0.15em] text-slate-500">
               <th className="p-3 font-bold">Name</th>
               <th className="p-3 font-bold">Email</th>
-              <th className="p-3 font-bold">Companies</th>
-              <th className="p-3 font-bold">Engineers</th>
+              {/* <th className="p-3 font-bold">Companies</th>
+              <th className="p-3 font-bold">Engineers</th> */}
               <th className="p-3"></th>
             </tr>
           </thead>
@@ -93,8 +93,8 @@ export default function SubAdminsPage() {
               <tr key={s.id} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="p-3 font-semibold text-navy">{s.name}</td>
                 <td className="p-3 text-slate-500">{s.email}</td>
-                <td className="p-3 text-slate-500">{(s.assigned_company_ids || []).length} companies</td>
-                <td className="p-3 text-slate-500">{(s.assigned_engineer_ids || []).length} engineers</td>
+                {/* <td className="p-3 text-slate-500">{(s.assigned_company_ids || []).length} companies</td>
+                <td className="p-3 text-slate-500">{(s.assigned_engineer_ids || []).length} engineers</td> */}
                 <td className="p-3">
                   <div className="flex items-center gap-2 justify-end">
                     <button onClick={() => openEdit(s)} className="p-1.5 rounded hover:bg-slate-100">

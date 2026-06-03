@@ -153,28 +153,28 @@ export default function CompaniesPage() {
                     {c.status}
                   </span>
                 </td>
-                {!isSubAdmin && (
-                  <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-1">
-                      <Link to={`/admin/companies/${c.id}`}
-                            className="p-1.5 rounded hover:bg-slate-100"
-                            title="View / Edit"
-                            data-testid={`company-edit-${c.company_code}`}>
-                        <Pencil className="w-3.5 h-3.5 text-slate-600" />
-                      </Link>
+                <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-1">
+                    <Link to={`/admin/companies/${c.id}`}
+                          className="p-1.5 rounded hover:bg-slate-100"
+                          title="View / Edit"
+                          data-testid={`company-edit-${c.company_code}`}>
+                      <Pencil className="w-3.5 h-3.5 text-slate-600" />
+                    </Link>
+                    {!isSubAdmin && (
                       <button onClick={() => setDelTarget(c)}
                               className="p-1.5 rounded hover:bg-red-50"
                               title="Delete"
                               data-testid={`company-delete-${c.company_code}`}>
                         <Trash2 className="w-3.5 h-3.5 text-red-600" />
                       </button>
-                    </div>
-                  </td>
-                )}
+                    )}
+                  </div>
+                </td>
               </tr>
             ))}
             {data.items.length === 0 && (
-              <tr><td colSpan={isSubAdmin ? 6 : 7} className="p-12 text-center text-slate-500">
+              <tr><td colSpan={7} className="p-12 text-center text-slate-500">
                 <Building2 className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                 <div>No companies found</div>
                 <Link to="/admin/companies/new" className="text-signal text-sm font-bold mt-2 inline-block">

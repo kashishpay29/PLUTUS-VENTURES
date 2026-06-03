@@ -197,11 +197,11 @@ export default function EngineersPage() {
               <Input value={form.skills} onChange={(e) => setForm({...form, skills: e.target.value})}
                      placeholder="Laptop Repair, Networking, Printer" />
             </div>
-            <div>
+            {/* <div>
               <Label className="text-xs font-bold">OEM Number <span className="text-slate-400 font-normal">(optional)</span></Label>
               <Input value={form.oem_number} onChange={(e) => setForm({...form, oem_number: e.target.value})}
                      placeholder="e.g. OEM-12345" />
-            </div>
+            </div> */}
             <div className="flex items-center justify-between p-3 rounded-md bg-slate-50 border border-slate-200">
               <div>
                 <div className="text-xs font-bold text-navy">Remote Engineer</div>
