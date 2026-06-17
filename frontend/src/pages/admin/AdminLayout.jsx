@@ -23,6 +23,7 @@ const ADMIN_NAV = [
   { to: "/admin/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/admin/ticket-admins", label: "Ticket Admins", icon: UserCog, adminOnly: true },
   { to: "/admin/sub-admins", label: "Sub-Admins", icon: UserCog, adminOnly: true },
+  { to: "/admin/company-admins", label: "Company Admins", icon: Building2, adminOnly: true },
 ];
 
 const SUB_ADMIN_NAV = [

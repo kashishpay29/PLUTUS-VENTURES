@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import {
   ArrowLeft, CheckCircle2, XCircle, Truck, MapPin, Wrench, FileSignature,
   Camera, Trash2, Plus, Loader2, FileDown, Phone, Cpu, ShieldCheck,
-  Clock
+  Clock, AlertTriangle, Building2, User, Hash
 } from "lucide-react";
 import { api, formatError, API } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
@@ -44,6 +44,7 @@ export default function EngineerTicketDetail() {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [reportOpen, setReportOpen] = useState(false);
+  const [issueOpen, setIssueOpen] = useState(false);
 
   const load = async () => {
     try {
@@ -161,8 +162,57 @@ export default function EngineerTicketDetail() {
 
       <Card className="p-4 rounded-md">
         <div className="text-xs uppercase tracking-wider font-bold text-slate-500 mb-2">Problem reported</div>
-        <p className="text-sm whitespace-pre-wrap text-navy">{ticket.problem_description}</p>
+        <p className="text-sm whitespace-pre-wrap text-navy">{ticket.issue_description || ticket.problem_description}</p>
       </Card>
+
+      {/* Site Details — Feature 3 */}
+      <Card className="p-4 rounded-md">
+        <div className="text-xs uppercase tracking-wider font-bold text-slate-500 mb-3 flex items-center gap-1.5">
+          <Building2 className="w-3.5 h-3.5" /> Site Details
+        </div>
+        <div className="space-y-2">
+          {ticket.company_name && (
+            <Row icon={Building2} label="Company" value={ticket.company_name} />
+          )}
+          {ticket.customer_name && (
+            <Row icon={User} label="Customer" value={ticket.customer_name} />
+          )}
+          {(ticket.contact_person || ticket.company?.contact_person) && (
+            <Row icon={User} label="Contact" value={ticket.contact_person || ticket.company?.contact_person} />
+          )}
+          {(ticket.customer_phone || ticket.company?.phone) && (
+            <Row icon={Phone} label="Phone" value={
+              <a href={`tel:${ticket.customer_phone || ticket.company?.phone}`} className="text-signal font-semibold">
+                {ticket.customer_phone || ticket.company?.phone}
+              </a>
+            } />
+          )}
+          {(ticket.current_address || ticket.company_address || ticket.company?.address || ticket.customer_address) && (
+            <Row icon={MapPin} label="Address" value={
+              ticket.current_address || ticket.company_address || ticket.company?.address || ticket.customer_address
+            } />
+          )}
+          {(ticket.company_city || ticket.company?.city) && (
+            <Row icon={MapPin} label="City" value={ticket.company_city || ticket.company?.city} />
+          )}
+          {(ticket.company_state || ticket.company?.state) && (
+            <Row label="State" value={ticket.company_state || ticket.company?.state} />
+          )}
+          {(ticket.company_pincode || ticket.company?.pincode) && (
+            <Row icon={Hash} label="Pincode" value={ticket.company_pincode || ticket.company?.pincode} />
+          )}
+        </div>
+      </Card>
+
+      {/* Report Issue button — Feature 4 */}
+      {["accepted", "travelling", "reached_site", "in_progress"].includes(ticket.status) && (
+        <button
+          onClick={() => setIssueOpen(true)}
+          className="w-full flex items-center justify-center gap-2 p-3 rounded-md border-2 border-dashed border-amber-300 text-amber-700 bg-amber-50 font-semibold text-sm hover:bg-amber-100 transition-colors"
+        >
+          <AlertTriangle className="w-4 h-4" /> Report Delay / Issue
+        </button>
+      )}
 
       {ticket.device_history?.length > 0 && (
         <Card className="p-4 rounded-md">
@@ -277,6 +327,15 @@ export default function EngineerTicketDetail() {
           ticket={ticket}
           onClose={() => setReportOpen(false)}
           onSubmitted={() => { setReportOpen(false); load(); }}
+        />
+      )}
+
+      {/* Issue / Delay Reporting drawer — Feature 4 */}
+      {issueOpen && (
+        <IssueDrawer
+          ticket={ticket}
+          onClose={() => setIssueOpen(false)}
+          onSubmitted={() => { setIssueOpen(false); load(); }}
         />
       )}
     </div>
@@ -524,6 +583,113 @@ function ReportDrawer({ ticket, onClose, onSubmitted }) {
           <Button onClick={submit} disabled={submitting} className="bg-navy hover:bg-navy/90 text-white font-bold h-12"
                   data-testid="submit-report-btn">
             {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Submit & Generate PDF"}
+          </Button>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
+  );
+}
+
+// ---------- Issue / Delay Reporting Drawer (Feature 4) ----------
+const ISSUE_TYPES = [
+  "Customer Not Available",
+  "Spare Part Pending",
+  "OEM Support Pending",
+  "Site Closed",
+  "Material Not Received",
+  "Network Issue",
+  "Access Denied",
+  "Other",
+];
+
+function IssueDrawer({ ticket, onClose, onSubmitted }) {
+  const [issueType, setIssueType] = useState("");
+  const [description, setDescription] = useState("");
+  const [expectedDate, setExpectedDate] = useState("");
+  const [priority, setPriority] = useState("medium");
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async () => {
+    if (!issueType) return toast.error("Select an issue type");
+    if (!description.trim()) return toast.error("Add a description");
+    setSubmitting(true);
+    try {
+      await api.post(`/tickets/${ticket.id}/issues`, {
+        issue_type: issueType,
+        description,
+        expected_resolution_date: expectedDate || null,
+        priority,
+      });
+      toast.success("Issue reported");
+      onSubmitted();
+    } catch (err) {
+      toast.error(formatError(err.response?.data?.detail));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Drawer open onOpenChange={(v) => !v && onClose()}>
+      <DrawerContent className="h-[80vh]">
+        <DrawerHeader>
+          <DrawerTitle className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
+            Report Issue — {ticket.ticket_no || ticket.ticket_number}
+          </DrawerTitle>
+        </DrawerHeader>
+        <div className="px-4 pb-4 overflow-auto space-y-4 flex-1">
+          <div>
+            <Label className="text-xs font-bold">Issue Type</Label>
+            <Select value={issueType} onValueChange={setIssueType}>
+              <SelectTrigger className="mt-1"><SelectValue placeholder="Select issue type…" /></SelectTrigger>
+              <SelectContent>
+                {ISSUE_TYPES.map((t) => (
+                  <SelectItem key={t} value={t}>{t}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs font-bold">Description</Label>
+            <Textarea
+              className="mt-1"
+              rows={4}
+              placeholder="Describe the issue in detail…"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label className="text-xs font-bold">Expected Resolution Date</Label>
+            <Input
+              type="date"
+              className="mt-1"
+              value={expectedDate}
+              onChange={(e) => setExpectedDate(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label className="text-xs font-bold">Priority</Label>
+            <Select value={priority} onValueChange={setPriority}>
+              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="low">Low</SelectItem>
+                <SelectItem value="medium">Medium</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+                <SelectItem value="critical">Critical</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DrawerFooter>
+          <Button
+            onClick={submit}
+            disabled={submitting}
+            className="bg-amber-600 hover:bg-amber-700 text-white font-bold h-12"
+          >
+            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Submit Issue Report"}
           </Button>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
         </DrawerFooter>

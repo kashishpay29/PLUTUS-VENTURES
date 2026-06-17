@@ -77,11 +77,16 @@ async def require_sub_admin(user=Depends(get_current_user)):
     return user
 
 async def require_admin_console(user=Depends(get_current_user)):
-    if user.get("role") not in ("admin", "sub_admin", "ticket_admin"):
+    if user.get("role") not in ("admin", "sub_admin", "ticket_admin", "company_admin"):
         raise HTTPException(status_code=403, detail="Admin console access required")
     return user
 
 async def require_ticket_operator(user=Depends(get_current_user)):
-    if user.get("role") not in ("admin", "sub_admin", "ticket_admin"):
+    if user.get("role") not in ("admin", "sub_admin", "ticket_admin", "company_admin"):
         raise HTTPException(status_code=403, detail="Ticket operator access required")
+    return user
+
+async def require_company_admin(user=Depends(get_current_user)):
+    if user.get("role") not in ("admin", "sub_admin", "company_admin"):
+        raise HTTPException(status_code=403, detail="Company admin access required")
     return user

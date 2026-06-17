@@ -35,7 +35,7 @@ from slowapi.errors import RateLimitExceeded
 from auth import (
     hash_password, verify_password, create_access_token,
     get_current_user, require_admin, require_engineer, require_sub_admin,
-    require_admin_console, require_ticket_operator, decode_token,
+    require_admin_console, require_ticket_operator, require_company_admin, decode_token,
 )
 from storage_client import init_storage, put_object, get_object
 from pdf_gen import build_service_report_pdf, build_outsource_internal_pdf
@@ -626,6 +626,13 @@ async def startup():
         db.attachments.create_index("ticket_id")
         db.notifications.create_index("user_id")
         db.otp_challenges.create_index("expires_at", expireAfterSeconds=0)
+
+        # Ticket issues
+        db.ticket_issues.create_index("ticket_id")
+        db.ticket_issues.create_index("engineer_id")
+        db.ticket_issues.create_index("company_id")
+        db.ticket_issues.create_index([("status", 1), ("created_at", -1)])
+        db.ticket_issues.create_index([("created_at", -1)])
 
         app.state._indexes_created = True
         logger.info("✓ Database indexes created")
@@ -1999,6 +2006,11 @@ async def create_ticket(payload: TicketCreate, admin=Depends(require_ticket_oper
         "customer_company": company["company_name"],
         "customer_address": company.get("address"),
         "current_address": payload.current_address,
+        "company_address": company.get("address"),
+        "company_city": company.get("city"),
+        "company_state": company.get("state"),
+        "company_pincode": company.get("pincode"),
+        "contact_person": company.get("contact_person"),
         "contact_source": payload.contact_source,
         "issue_description": payload.issue_description,
         "problem_description": payload.issue_description,
@@ -2060,6 +2072,10 @@ async def list_tickets(
         elif not status:
             q["status"] = {"$nin": ["closed", "rejected"]}
 
+    # company_admin: scope to own company only
+    if user["role"] == "company_admin":
+        q["company_id"] = user.get("company_id")
+
     skip = (page - 1) * per_page
 
     # Single aggregation instead of 2 separate queries
@@ -2082,18 +2098,30 @@ async def list_tickets(
                         "ticket_number": 1,
                         "customer_name": 1,
                         "customer_phone": 1,
+                        "customer_email": 1,
                         "customer_company": 1,
                         "created_by": 1,
+                        "company_id": 1,
                         "company_name": 1,
+                        "company_address": 1,
+                        "company_city": 1,
+                        "company_state": 1,
+                        "company_pincode": 1,
+                        "contact_person": 1,
+                        "current_address": 1,
+                        "customer_address": 1,
                         "assigned_engineer_name": 1,
                         "assigned_engineer_id": 1,
                         "status": 1,
+                        "priority": 1,
+                        "issue_description": 1,
                         "created_at": 1,
                         "approved_at": 1,
                         "completed_at": 1,
                         "product_reference_number": 1,
                         "oem_reference_number": 1,
                         "is_deleted": 1,
+                        "has_issue": 1,
                     }},
                 ]
             }
@@ -2201,6 +2229,8 @@ async def assign_ticket(ticket_id: str, payload: TicketAssign,
         raise HTTPException(status_code=403, detail="Ticket admins can only reassign active tickets")
 
     if payload.is_outsource:
+        if admin.get("role") == "ticket_admin":
+            raise HTTPException(status_code=403, detail="Ticket admins can only assign internal engineers")
         if not payload.outsource_name:
             raise HTTPException(status_code=400, detail="Outsource engineer name required")
         db.tickets.update_one({"id": ticket_id}, {"$set": {
@@ -3297,6 +3327,318 @@ async def live_locations(user=Depends(require_sub_admin)):
             "customer_name": t.get("customer_name"),
         })
     return out
+
+# ---------- TICKET ISSUES (Feature 4: Engineer Failure/Delay Reporting) ----------
+class TicketIssueCreate(BaseModel):
+    issue_type: Literal[
+        "Customer Not Available", "Spare Part Pending", "OEM Support Pending",
+        "Site Closed", "Material Not Received", "Network Issue",
+        "Access Denied", "Other"
+    ]
+    description: str
+    expected_resolution_date: Optional[str] = None
+    priority: Literal["low", "medium", "high", "critical"] = "medium"
+
+class TicketIssueUpdate(BaseModel):
+    status: Optional[Literal["open", "resolved", "cancelled"]] = None
+    description: Optional[str] = None
+    expected_resolution_date: Optional[str] = None
+    priority: Optional[Literal["low", "medium", "high", "critical"]] = None
+
+@api.post("/tickets/{ticket_id}/issues")
+async def report_ticket_issue(
+    ticket_id: str, payload: TicketIssueCreate,
+    user=Depends(require_engineer),
+):
+    ticket = db.tickets.find_one({"id": ticket_id})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("assigned_engineer_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Not your ticket")
+
+    issue_id = new_id()
+    doc = {
+        "id": issue_id,
+        "ticket_id": ticket_id,
+        "ticket_no": ticket.get("ticket_no") or ticket.get("ticket_number"),
+        "engineer_id": user["id"],
+        "engineer_name": user.get("name"),
+        "company_id": ticket.get("company_id"),
+        "issue_type": payload.issue_type,
+        "description": payload.description,
+        "expected_resolution_date": payload.expected_resolution_date,
+        "priority": payload.priority,
+        "status": "open",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    db.ticket_issues.insert_one(doc)
+
+    # Mark ticket has_issue flag and add status log entry
+    db.tickets.update_one(
+        {"id": ticket_id},
+        {"$set": {"has_issue": True, "updated_at": now_iso()}}
+    )
+    _log_status(ticket_id, user, ticket["status"], ticket["status"],
+                f"Issue reported: {payload.issue_type}")
+
+    # Notify admins
+    db.notifications.insert_one({
+        "id": new_id(), "user_id": "admin", "ticket_id": ticket_id,
+        "title": f"Issue reported on {ticket.get('ticket_no')}",
+        "message": f"{user.get('name')}: {payload.issue_type}",
+        "type": "issue_reported", "read_status": False, "read": False,
+        "created_at": now_iso(),
+    })
+    doc.pop("_id", None)
+    return doc
+
+@api.get("/tickets/{ticket_id}/issues")
+async def get_ticket_issues(ticket_id: str, user=Depends(get_current_user)):
+    ticket = db.tickets.find_one({"id": ticket_id})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if user["role"] == "engineer" and ticket.get("assigned_engineer_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Not your ticket")
+    issues = list(db.ticket_issues.find({"ticket_id": ticket_id}, {"_id": 0}).sort("created_at", -1))
+    return issues
+
+@api.get("/issues")
+async def list_all_issues(
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    company_id: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+    user=Depends(require_admin_console),
+):
+    q: Dict[str, Any] = {}
+    if status:
+        q["status"] = status
+    if priority:
+        q["priority"] = priority
+    if company_id:
+        q["company_id"] = company_id
+    if user.get("role") == "company_admin":
+        q["company_id"] = user.get("company_id")
+    elif user.get("role") == "sub_admin":
+        assigned = user.get("assigned_company_ids") or []
+        if assigned:
+            q["company_id"] = {"$in": assigned}
+
+    skip = (page - 1) * per_page
+    total = db.ticket_issues.count_documents(q)
+    items = list(db.ticket_issues.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(per_page))
+    return {"items": items, "total": total, "page": page, "per_page": per_page}
+
+@api.patch("/issues/{issue_id}")
+async def update_issue(issue_id: str, payload: TicketIssueUpdate, user=Depends(require_admin_console)):
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    updates["updated_at"] = now_iso()
+    res = db.ticket_issues.update_one({"id": issue_id}, {"$set": updates})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    issue = db.ticket_issues.find_one({"id": issue_id}, {"_id": 0})
+    # If resolved, clear has_issue flag if no more open issues
+    if payload.status in ("resolved", "cancelled"):
+        open_count = db.ticket_issues.count_documents(
+            {"ticket_id": issue["ticket_id"], "status": "open"}
+        )
+        if open_count == 0:
+            db.tickets.update_one(
+                {"id": issue["ticket_id"]},
+                {"$set": {"has_issue": False, "updated_at": now_iso()}}
+            )
+    return issue
+
+# ---------- COMPANY ADMIN MANAGEMENT (Feature 5-8) ----------
+class CompanyAdminCreate(BaseModel):
+    name: str
+    email: EmailStr
+    phone: Optional[str] = None
+    password: str
+    company_id: str
+    designation: Optional[str] = None
+    can_assign_engineers: bool = False
+
+class CompanyAdminUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    password: Optional[str] = None
+    designation: Optional[str] = None
+    is_active: Optional[bool] = None
+    can_assign_engineers: Optional[bool] = None
+
+@api.get("/company-admins", dependencies=[Depends(require_admin)])
+async def list_company_admins(company_id: Optional[str] = None):
+    q: Dict[str, Any] = {"role": "company_admin"}
+    if company_id:
+        q["company_id"] = company_id
+    items = list(db.users.find(q, {"_id": 0, "password_hash": 0}).sort("created_at", -1))
+    return {"items": items, "total": len(items)}
+
+@api.post("/company-admins", dependencies=[Depends(require_admin)])
+async def create_company_admin(payload: CompanyAdminCreate):
+    company = db.companies.find_one({"id": payload.company_id})
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    email = payload.email.lower().strip()
+    if db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already exists")
+    doc = {
+        "id": new_id(),
+        "email": email,
+        "name": payload.name,
+        "role": "company_admin",
+        "phone": payload.phone,
+        "company_id": payload.company_id,
+        "company_name": company["company_name"],
+        "designation": payload.designation or "Company Admin",
+        "can_assign_engineers": payload.can_assign_engineers,
+        "password_hash": hash_password(payload.password),
+        "is_active": True,
+        "status": "active",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    db.users.insert_one(doc)
+    return clean({**doc})
+
+@api.patch("/company-admins/{ca_id}", dependencies=[Depends(require_admin)])
+async def update_company_admin(ca_id: str, payload: CompanyAdminUpdate):
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if "password" in updates:
+        updates["password_hash"] = hash_password(updates.pop("password"))
+    updates["updated_at"] = now_iso()
+    if len(updates) == 1:
+        raise HTTPException(status_code=400, detail="No changes")
+    res = db.users.update_one({"id": ca_id, "role": "company_admin"}, {"$set": updates})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Company admin not found")
+    return clean(db.users.find_one({"id": ca_id}, {"_id": 0, "password_hash": 0}))
+
+@api.delete("/company-admins/{ca_id}", dependencies=[Depends(require_admin)])
+async def delete_company_admin(ca_id: str):
+    res = db.users.delete_one({"id": ca_id, "role": "company_admin"})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Company admin not found")
+    return {"ok": True}
+
+# ---------- COMPANY ADMIN DASHBOARD (Feature 9) ----------
+@api.get("/dashboard/company")
+async def company_dashboard(user=Depends(get_current_user)):
+    if user.get("role") not in ("admin", "sub_admin", "company_admin"):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    company_id = user.get("company_id") if user.get("role") == "company_admin" else None
+    cache_k = _cache_key("dashboard-company", user)
+    cached = _cache_get(cache_k)
+    if cached is not None:
+        return cached
+
+    q: Dict[str, Any] = {"is_deleted": {"$ne": True}}
+    if company_id:
+        q["company_id"] = company_id
+
+    counts_raw = list(db.tickets.aggregate([
+        {"$match": q},
+        {"$group": {"_id": "$status", "count": {"$sum": 1}}}
+    ]))
+    counts = {s: 0 for s in TICKET_STATUSES}
+    for item in counts_raw:
+        counts[item["_id"]] = item["count"]
+    counts["total"] = sum(counts.values())
+    counts["active"] = sum(counts.get(s, 0) for s in [
+        "open", "assigned", "accepted", "travelling",
+        "reached_site", "in_progress", "resolved"
+    ])
+    counts["completed"] = sum(counts.get(s, 0) for s in [
+        "completed_with_signature", "report_generated", "closed"
+    ])
+
+    recent_tickets = list(db.tickets.find(
+        q, {"_id": 0, "id": 1, "ticket_no": 1, "ticket_number": 1,
+            "customer_name": 1, "status": 1, "created_at": 1,
+            "assigned_engineer_name": 1}
+    ).sort("created_at", -1).limit(10))
+
+    open_issues = db.ticket_issues.count_documents({
+        "status": "open",
+        **({"company_id": company_id} if company_id else {})
+    })
+
+    response = {
+        "ticket_counts": counts,
+        "recent_tickets": recent_tickets,
+        "open_issues": open_issues,
+        "company_id": company_id,
+    }
+    return _cache_set(cache_k, response, 30)
+
+# ---------- COMPANY ANALYTICS (Feature 10) ----------
+@api.get("/analytics/company")
+async def company_analytics(user=Depends(get_current_user)):
+    if user.get("role") not in ("admin", "sub_admin", "company_admin"):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    company_id = user.get("company_id") if user.get("role") == "company_admin" else None
+    today = date.today()
+    cache_k = _cache_key("analytics-company", user, today.isoformat())
+    cached = _cache_get(cache_k)
+    if cached is not None:
+        return cached
+
+    scope: Dict[str, Any] = {}
+    if company_id:
+        scope["company_id"] = company_id
+
+    start_14 = (today - timedelta(days=13)).isoformat()
+    per_day_raw = list(db.tickets.aggregate([
+        {"$match": {"created_at": {"$gte": start_14}, **scope}},
+        {"$group": {"_id": {"$substr": ["$created_at", 0, 10]}, "count": {"$sum": 1}}},
+    ]))
+    per_day_map = {r["_id"]: r["count"] for r in per_day_raw}
+    per_day = [
+        {"date": (today - timedelta(days=i)).isoformat(),
+         "count": per_day_map.get((today - timedelta(days=i)).isoformat(), 0)}
+        for i in range(13, -1, -1)
+    ]
+
+    status_counts_raw = list(db.tickets.aggregate([
+        {"$match": scope},
+        {"$group": {"_id": "$status", "count": {"$sum": 1}}}
+    ]))
+    status_counts = {r["_id"]: r["count"] for r in status_counts_raw}
+
+    closed_tickets = list(db.tickets.find(
+        {"status": {"$in": ["closed", "report_generated"]},
+         "completed_at": {"$ne": None}, "created_at": {"$ne": None}, **scope},
+        {"_id": 0, "created_at": 1, "completed_at": 1}
+    ).limit(500))
+
+    def hours_diff2(start, end):
+        try:
+            from datetime import datetime as dt2
+            s = dt2.fromisoformat(start[:19])
+            e = dt2.fromisoformat(end[:19])
+            diff = (e - s).total_seconds() / 3600
+            return round(diff, 1) if diff >= 0 else None
+        except Exception:
+            return None
+
+    resolution_hours = [
+        h for t in closed_tickets
+        if (h := hours_diff2(t.get("created_at", ""), t.get("completed_at", ""))) is not None
+    ]
+    avg_resolution_hours = round(sum(resolution_hours) / len(resolution_hours), 1) if resolution_hours else 0
+
+    response = {
+        "per_day": per_day,
+        "status_counts": status_counts,
+        "avg_resolution_hours": avg_resolution_hours,
+        "total_closed": len(resolution_hours),
+    }
+    return _cache_set(cache_k, response, 120)
 
 app.include_router(api)
 app.add_middleware(

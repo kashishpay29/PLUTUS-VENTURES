@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import React, { useMemo, useState, useEffect } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { getCachedJson, readCachedJson } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { useSmartPolling } from "../../hooks/useSmartPolling";
@@ -7,7 +7,7 @@ import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { StatusBadge, STATUS_LABEL, formatDate } from "../../lib/status";
-import { Search, PlusCircle, LayoutGrid, List as ListIcon , Wifi } from "lucide-react";
+import { Search, PlusCircle, LayoutGrid, List as ListIcon, Wifi, MapPin, AlertTriangle } from "lucide-react";
 
 const COLUMNS = [
   "open", "assigned", "accepted", "travelling",
@@ -31,13 +31,20 @@ const TICKETS_CACHE_KEY = "admin-tickets";
 export default function TicketBoard() {
   const { user } = useAuth();
   const isTicketAdmin = user?.role === "ticket_admin";
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tickets, setTickets] = useState(() => {
     const cached = readCachedJson(TICKETS_CACHE_KEY, 120000);
     return Array.isArray(cached) ? cached : cached?.items || [];
   });
   const [q, setQ] = useState("");
-  const [view, setView] = useState("board");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [view, setView] = useState("list");
+  const [statusFilter, setStatusFilter] = useState(searchParams.get("status") || "all");
+
+  // Sync status filter from URL param (e.g. when navigating from dashboard cards)
+  useEffect(() => {
+    const urlStatus = searchParams.get("status");
+    if (urlStatus) setStatusFilter(urlStatus);
+  }, [searchParams]);
   const visibleColumns = useMemo(
     () => (isTicketAdmin ? COLUMNS.filter((col) => col !== "closed") : COLUMNS),
     [isTicketAdmin]
@@ -192,25 +199,41 @@ export default function TicketBoard() {
                           <Card className={`p-4 hover-lift rounded-md border-l-4 border-status-${t.status}`}
                                 data-testid={`ticket-card-${t.ticket_number}`}>
                             <div className="flex items-center justify-between mb-2">
-                              <div className="font-mono font-bold text-xs text-signal">{t.ticket_number}</div>
-                              {hasActiveWarranty(t) && (
-                                <span className="text-[10px] uppercase tracking-wide font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">
-                                  Warranty
-                                </span>
-                              )}
+                              <div className="font-mono font-bold text-xs text-signal">{t.ticket_no || t.ticket_number}</div>
+                              <div className="flex items-center gap-1">
+                                {t.has_issue && (
+                                  <span className="text-[9px] uppercase font-bold px-1 py-0.5 rounded bg-amber-50 text-amber-700 flex items-center gap-0.5">
+                                    <AlertTriangle className="w-2 h-2" /> Issue
+                                  </span>
+                                )}
+                                {hasActiveWarranty(t) && (
+                                  <span className="text-[10px] uppercase tracking-wide font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">
+                                    Warranty
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             <div className="font-semibold text-navy text-sm truncate">{t.customer_name}</div>
-                            <div className="text-xs text-slate-500 truncate">
-                              {deviceSummary(t)}
-                            </div>
+                            <div className="text-xs text-slate-500 truncate">{deviceSummary(t)}</div>
+                            {(t.company_city || t.company_address || t.current_address) && (
+                              <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-400">
+                                <MapPin className="w-2.5 h-2.5 flex-shrink-0" />
+                                <span className="truncate">
+                                  {[t.company_city, t.company_state].filter(Boolean).join(", ") ||
+                                   (t.current_address || t.company_address || "").slice(0, 30)}
+                                </span>
+                              </div>
+                            )}
                             <div className="mt-3 flex items-center justify-between">
-                              {t.engineer ? (
+                              {t.engineer || t.assigned_engineer_name ? (
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <div className="w-5 h-5 rounded-full bg-navy text-white grid place-items-center text-[10px] font-bold">
-                                    {t.engineer.name?.[0]?.toUpperCase()}
+                                    {(t.engineer?.name || t.assigned_engineer_name)?.[0]?.toUpperCase()}
                                   </div>
-                                  <span className="text-xs text-slate-600 truncate max-w-[100px]">{t.engineer.name}</span>
-                                  {t.engineer.is_remote && (
+                                  <span className="text-xs text-slate-600 truncate max-w-[100px]">
+                                    {t.engineer?.name || t.assigned_engineer_name}
+                                  </span>
+                                  {t.engineer?.is_remote && (
                                     <span className="flex items-center gap-0.5 text-[9px] font-bold uppercase px-1 py-0.5 rounded-full bg-blue-100 text-blue-700">
                                       <Wifi className="w-2 h-2" /> Remote
                                     </span>
@@ -240,11 +263,13 @@ export default function TicketBoard() {
 
       {view === "list" && (
         <Card className="rounded-md overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr className="text-left text-[10px] uppercase tracking-[0.15em] text-slate-500">
                 <th className="p-3 font-bold">Ticket</th>
                 <th className="p-3 font-bold">Customer</th>
+                <th className="p-3 font-bold">Address</th>
                 <th className="p-3 font-bold">Device</th>
                 <th className="p-3 font-bold">Engineer</th>
                 <th className="p-3 font-bold">Created by</th>
@@ -258,18 +283,27 @@ export default function TicketBoard() {
                   <td className="p-3">
                     <Link to={`/admin/tickets/${t.id}`}
                           className="font-mono font-bold text-signal">
-                      {t.ticket_number}
+                      {t.ticket_no || t.ticket_number}
                     </Link>
+                    {t.has_issue && (
+                      <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-bold uppercase px-1 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                        <AlertTriangle className="w-2.5 h-2.5" /> Issue
+                      </span>
+                    )}
                   </td>
                   <td className="p-3">
                     <div className="font-semibold text-navy">{t.customer_name}</div>
-                    <div className="text-xs text-slate-500">{t.customer_company || t.customer_phone}</div>
+                    <div className="text-xs text-slate-500">{t.customer_company || t.company_name}</div>
+                    {t.customer_phone && <div className="text-xs text-slate-400">{t.customer_phone}</div>}
+                  </td>
+                  <td className="p-3 min-w-[160px]">
+                    <AddressCell ticket={t} />
                   </td>
                   <td className="p-3">
                     <div className="font-medium">{deviceSummary(t)}</div>
                     <div className="text-xs font-mono text-slate-500">{deviceIdSummary(t)}</div>
                   </td>
-                  <td className="p-3 text-slate-700">{t.engineer?.name || "—"}</td>
+                  <td className="p-3 text-slate-700">{t.assigned_engineer_name || t.engineer?.name || "—"}</td>
                   <td className="p-3">
                     {t.created_by_user ? (
                       <div>
@@ -281,14 +315,15 @@ export default function TicketBoard() {
                     ) : <span className="text-slate-400">—</span>}
                   </td>
                   <td className="p-3"><StatusBadge status={t.status} /></td>
-                  <td className="p-3 text-xs text-slate-500">{formatDate(t.created_at)}</td>
+                  <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{formatDate(t.created_at)}</td>
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td colSpan={7} className="p-8 text-center text-slate-500">No tickets found</td></tr>
+                <tr><td colSpan={8} className="p-8 text-center text-slate-500">No tickets found</td></tr>
               )}
             </tbody>
           </table>
+          </div>
         </Card>
       )}
     </div>
@@ -321,5 +356,25 @@ function hasActiveWarranty(ticket) {
 function creatorRoleLabel(role) {
   if (role === "sub_admin") return "Sub Admin";
   if (role === "ticket_admin") return "Ticket Admin";
+  if (role === "company_admin") return "Company Admin";
   return "Admin";
+}
+
+function AddressCell({ ticket }) {
+  const addr = ticket.current_address || ticket.company_address || ticket.customer_address;
+  const city = ticket.company_city;
+  const state = ticket.company_state;
+  const pin = ticket.company_pincode;
+  if (!addr && !city) return <span className="text-slate-400 text-xs">—</span>;
+  return (
+    <div className="text-xs text-slate-600 space-y-0.5">
+      {addr && <div className="truncate max-w-[180px]" title={addr}>{addr}</div>}
+      {(city || state || pin) && (
+        <div className="flex items-center gap-1 text-slate-400">
+          <MapPin className="w-2.5 h-2.5 flex-shrink-0" />
+          <span>{[city, state, pin].filter(Boolean).join(", ")}</span>
+        </div>
+      )}
+    </div>
+  );
 }

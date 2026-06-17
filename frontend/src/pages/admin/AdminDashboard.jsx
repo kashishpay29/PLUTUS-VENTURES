@@ -12,10 +12,11 @@ import { Button } from "../../components/ui/button";
 import { StatusBadge, STATUS_LABEL, formatDate } from "../../lib/status";
 
 const STAT_CARDS = [
-  { key: "open", label: "Open" },
-  { key: "assigned", label: "Assigned" },
-  { key: "in_progress", label: "In Progress" },
-  { key: "completed", label: "Completed" },
+  { key: "open",        label: "Open",        status: "open" },
+  { key: "assigned",    label: "Assigned",    status: "assigned" },
+  { key: "in_progress", label: "In Progress", status: "in_progress" },
+  { key: "closed",      label: "Completed",   status: "closed" },
+  { key: "rejected",    label: "Failed",      status: "rejected" },
 ];
 
 const DASHBOARD_CACHE_KEY = "admin-dashboard";
@@ -84,22 +85,23 @@ export default function AdminDashboard() {
         </Link>
       </div>
 
-      {/* Big stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Big stats — clickable cards navigate to filtered ticket board */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {STAT_CARDS.map((s) => (
-          <Card
-            key={s.key}
-            className={`p-5 border-l-4 hover-lift rounded-md border-status-${s.key}`}
-            data-testid={`stat-${s.key}`}
-          >
-            <div className="text-xs uppercase tracking-[0.18em] text-slate-500 font-bold">
-              {s.label}
-            </div>
-            <div className="mt-2 font-display font-black text-4xl text-navy">
-              {counts[s.key] || 0}
-            </div>
-            <div className="mt-1 text-[11px] text-slate-500">tickets</div>
-          </Card>
+          <Link key={s.key} to={`/admin/tickets?status=${s.status}`}>
+            <Card
+              className={`p-5 border-l-4 hover-lift rounded-md cursor-pointer transition-shadow hover:shadow-md border-status-${s.key}`}
+              data-testid={`stat-${s.key}`}
+            >
+              <div className="text-xs uppercase tracking-[0.18em] text-slate-500 font-bold">
+                {s.label}
+              </div>
+              <div className="mt-2 font-display font-black text-4xl text-navy">
+                {counts[s.key] || 0}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-500">tickets →</div>
+            </Card>
+          </Link>
         ))}
       </div>
 

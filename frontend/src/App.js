@@ -22,6 +22,12 @@ const DeviceHistoryPage = lazy(() => import("@/pages/admin/DeviceHistoryPage"));
 const SubAdminsPage = lazy(() => import("@/pages/admin/SubAdminsPage"));
 const SubAdminAnalyticsPage = lazy(() => import("@/pages/admin/SubAdminAnalyticsPage"));
 const TicketAdminsPage = lazy(() => import("@/pages/admin/TicketAdminsPage"));
+const CompanyAdminsPage = lazy(() => import("@/pages/admin/CompanyAdminsPage"));
+
+const CompanyLayout = lazy(() => import("@/pages/company/CompanyLayout"));
+const CompanyDashboard = lazy(() => import("@/pages/company/CompanyDashboard"));
+const CompanyTickets = lazy(() => import("@/pages/company/CompanyTickets"));
+const CompanyAnalytics = lazy(() => import("@/pages/company/CompanyAnalytics"));
 
 const EngineerLayout = lazy(() => import("@/pages/engineer/EngineerLayout"));
 const EngineerHome = lazy(() => import("@/pages/engineer/EngineerHome"));
@@ -45,9 +51,14 @@ function Protected({ role, children }) {
   }
   if (user === false) return <Navigate to="/login" replace />;
   if (role === "admin" && !["admin", "sub_admin", "ticket_admin"].includes(user.role)) {
-    return <Navigate to={user.role === "engineer" ? "/engineer" : "/login"} replace />;
+    if (user.role === "engineer") return <Navigate to="/engineer" replace />;
+    if (user.role === "company_admin") return <Navigate to="/company" replace />;
+    return <Navigate to="/login" replace />;
   }
   if (role === "engineer" && user.role !== "engineer") {
+    return <Navigate to="/admin" replace />;
+  }
+  if (role === "company_admin" && user.role !== "company_admin") {
     return <Navigate to="/admin" replace />;
   }
   return children;
@@ -63,11 +74,11 @@ function RoleGate({ roles, children }) {
 
 function RootRedirect() {
   const { user } = useAuth();
-  if (user === null) {
-    return <LoadingScreen />;
-  }
+  if (user === null) return <LoadingScreen />;
   if (user === false) return <Navigate to="/login" replace />;
-  return <Navigate to={["admin", "sub_admin", "ticket_admin"].includes(user.role) ? "/admin" : "/engineer"} replace />;
+  if (["admin", "sub_admin", "ticket_admin"].includes(user.role)) return <Navigate to="/admin" replace />;
+  if (user.role === "company_admin") return <Navigate to="/company" replace />;
+  return <Navigate to="/engineer" replace />;
 }
 
 function App() {
@@ -96,6 +107,14 @@ function App() {
                 <Route path="sub-admins" element={<RoleGate roles={["admin"]}><SubAdminsPage /></RoleGate>} />
                 <Route path="sub-admins/:id/analytics" element={<RoleGate roles={["admin"]}><SubAdminAnalyticsPage /></RoleGate>} />
                 <Route path="ticket-admins" element={<RoleGate roles={["admin"]}><TicketAdminsPage /></RoleGate>} />
+                <Route path="company-admins" element={<RoleGate roles={["admin"]}><CompanyAdminsPage /></RoleGate>} />
+              </Route>
+
+              <Route path="/company" element={<Protected role="company_admin"><CompanyLayout /></Protected>}>
+                <Route index element={<CompanyDashboard />} />
+                <Route path="tickets" element={<CompanyTickets />} />
+                <Route path="tickets/:id" element={<TicketDetail />} />
+                <Route path="analytics" element={<CompanyAnalytics />} />
               </Route>
 
               <Route path="/engineer" element={<Protected role="engineer"><EngineerLayout /></Protected>}>
