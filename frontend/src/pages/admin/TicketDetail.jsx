@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
+import { useSmartPolling } from "../../hooks/useSmartPolling";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -48,11 +49,8 @@ export default function TicketDetail() {
   }
 }, [id]);
 
-  useEffect(() => {
-  load();
-  const t = setInterval(load, 30000);
-  return () => clearInterval(t);
-}, [load]);
+  useEffect(() => { load(); }, [load]);
+  useSmartPolling(load, 30000);
 
 
   const loadEngineers = async () => {

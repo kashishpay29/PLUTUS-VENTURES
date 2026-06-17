@@ -25,6 +25,7 @@ from fastapi import (
 
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, EmailStr
@@ -2952,7 +2953,10 @@ async def admin_dashboard(user=Depends(get_current_user)):
 
         # ---- Recent activity (LIMITED) ----
         if user.get("role") in ("sub_admin", "ticket_admin"):
-            ticket_ids = [t["id"] for t in db.tickets.find(ticket_scope, {"_id": 0, "id": 1})]
+            # Limit to recent 500 ticket IDs to avoid huge $in queries
+            ticket_ids = [t["id"] for t in db.tickets.find(
+                ticket_scope, {"_id": 0, "id": 1}
+            ).sort("created_at", -1).limit(500)]
             log_query = {"ticket_id": {"$in": ticket_ids}}
             if user.get("role") == "sub_admin":
                 log_query = {"$or": [log_query, {"target_user_id": user["id"]}]}
@@ -3025,7 +3029,7 @@ async def admin_dashboard(user=Depends(get_current_user)):
             "recent_activity": recent,
             "warranty_alerts": warranty_alerts,
         }
-        return _cache_set(cache_key, response, 15)
+        return _cache_set(cache_key, response, 30)
 
     except Exception as e:
         print("DASHBOARD ERROR:", str(e))
@@ -3269,16 +3273,14 @@ async def analytics(user=Depends(get_current_user)):
         if eid not in eng_res_map: eng_res_map[eid] = []
         eng_res_map[eid].append(h)
 
-    eng_resolution = []
-    for eid, hrs in eng_res_map.items():
-        eng = db.users.find_one({"id": eid}, {"_id": 0, "name": 1})
-        if eng:
-            eng_resolution.append({
-                "name": eng["name"],
-                "avg_hours": round(sum(hrs) / len(hrs), 1),
-                "tickets": len(hrs),
-            })
-    eng_resolution.sort(key=lambda x: x["avg_hours"])
+    eng_name_map2 = {e["id"]: e["name"] for e in db.users.find(
+        {"id": {"$in": list(eng_res_map.keys())}, "role": "engineer"},
+        {"_id": 0, "id": 1, "name": 1},
+    )}
+    eng_resolution = sorted([
+        {"name": eng_name_map2[eid], "avg_hours": round(sum(hrs) / len(hrs), 1), "tickets": len(hrs)}
+        for eid, hrs in eng_res_map.items() if eid in eng_name_map2
+    ], key=lambda x: x["avg_hours"])
 
     response = {
         "per_day": per_day,
@@ -3641,6 +3643,7 @@ async def company_analytics(user=Depends(get_current_user)):
     return _cache_set(cache_k, response, 120)
 
 app.include_router(api)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,

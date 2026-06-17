@@ -35,7 +35,7 @@ export default function AdminDashboard() {
   const load = async () => {
     try {
       const fresh = await getCachedJson("/dashboard/admin", {
-        ttl: 15000,
+        ttl: 60000,
         storageKey: DASHBOARD_CACHE_KEY,
       });
       setData(fresh);
@@ -45,7 +45,7 @@ export default function AdminDashboard() {
     }
   };
 
-  useSmartPolling(load, 30000);
+  useSmartPolling(load, 60000);
 
   if (!data) {
     return (

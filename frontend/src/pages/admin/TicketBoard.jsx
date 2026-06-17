@@ -56,15 +56,15 @@ export default function TicketBoard() {
 
   const load = async () => {
     try {
-      const data = await getCachedJson("/tickets", {
-        ttl: 15000,
+      const data = await getCachedJson("/tickets?per_page=200", {
+        ttl: 30000,
         storageKey: TICKETS_CACHE_KEY,
       });
       setTickets(Array.isArray(data) ? data : data.items || []);
     } catch {}
   };
 
-  useSmartPolling(load, 60000);
+  useSmartPolling(load, 90000);
 
   const statusCounts = useMemo(() => {
     return tickets.reduce((acc, ticket) => {
