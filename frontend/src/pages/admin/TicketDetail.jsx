@@ -217,27 +217,33 @@ export default function TicketDetail() {
               )}
             </div>
 
-            {/* Address section */}
-            {(ticket.current_address || ticket.company_address || ticket.customer_address ||
-              ticket.company?.address || ticket.company_city || ticket.company?.city) && (
-              <div className="mt-4 pt-4 border-t border-slate-100">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold flex items-center gap-1 mb-2">
-                  <MapPin className="w-3 h-3" /> Site Address
-                </div>
-                <div className="text-sm text-navy space-y-0.5">
-                  {(ticket.current_address || ticket.company_address || ticket.company?.address || ticket.customer_address) && (
-                    <div>{ticket.current_address || ticket.company_address || ticket.company?.address || ticket.customer_address}</div>
-                  )}
-                  <div className="text-slate-500">
-                    {[
-                      ticket.company_city  || ticket.company?.city,
-                      ticket.company_state || ticket.company?.state,
-                      ticket.company_pincode || ticket.company?.pincode,
-                    ].filter(Boolean).join(", ")}
+            {/* Address section — always visible */}
+            <div className="mt-4 pt-4 border-t border-slate-100">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold flex items-center gap-1 mb-3">
+                <MapPin className="w-3 h-3" /> Site Address
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">Address</div>
+                  <div className="text-navy">
+                    {ticket.current_address || ticket.company_address ||
+                     ticket.company?.address || ticket.customer_address || "—"}
                   </div>
                 </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">City</div>
+                  <div className="text-navy">{ticket.company_city || ticket.company?.city || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">State</div>
+                  <div className="text-navy">{ticket.company_state || ticket.company?.state || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">Pincode</div>
+                  <div className="text-navy">{ticket.company_pincode || ticket.company?.pincode || "—"}</div>
+                </div>
               </div>
-            )}
+            </div>
           </Card>
             {devices.length > 1 ? (
               <div className="mt-5 overflow-x-auto border border-slate-200 rounded-md">
