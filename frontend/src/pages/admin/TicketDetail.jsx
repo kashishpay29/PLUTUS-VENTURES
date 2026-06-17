@@ -5,7 +5,7 @@ import {
   ArrowLeft, User as UserIcon, Phone, Building2, Cpu, ShieldCheck,
   FileText, MapPin, Image as ImageIcon, Wrench, CheckCircle2,
   Clock, Activity, Download, BadgeCheck, Wifi, UserCheck, Pencil,
-  ExternalLink, DollarSign } from "lucide-react";
+  ExternalLink, DollarSign, Hash } from "lucide-react";
 import { api, formatError, API } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { Input } from "../../components/ui/input";
@@ -210,9 +210,35 @@ export default function TicketDetail() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
               <KV icon={UserIcon} label="Customer" value={ticket.customer_name} />
               <KV icon={Phone} label="Phone" value={ticket.customer_phone} />
-              <KV icon={Building2} label="Company" value={ticket.customer_company || "—"} />
+              <KV icon={Building2} label="Company" value={ticket.customer_company || ticket.company_name || "—"} />
               <KV label="Source" value={(ticket.contact_source || "").toUpperCase()} />
+              {(ticket.contact_person || ticket.company?.contact_person) && (
+                <KV icon={UserCheck} label="Contact Person" value={ticket.contact_person || ticket.company?.contact_person} />
+              )}
             </div>
+
+            {/* Address section */}
+            {(ticket.current_address || ticket.company_address || ticket.customer_address ||
+              ticket.company?.address || ticket.company_city || ticket.company?.city) && (
+              <div className="mt-4 pt-4 border-t border-slate-100">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold flex items-center gap-1 mb-2">
+                  <MapPin className="w-3 h-3" /> Site Address
+                </div>
+                <div className="text-sm text-navy space-y-0.5">
+                  {(ticket.current_address || ticket.company_address || ticket.company?.address || ticket.customer_address) && (
+                    <div>{ticket.current_address || ticket.company_address || ticket.company?.address || ticket.customer_address}</div>
+                  )}
+                  <div className="text-slate-500">
+                    {[
+                      ticket.company_city  || ticket.company?.city,
+                      ticket.company_state || ticket.company?.state,
+                      ticket.company_pincode || ticket.company?.pincode,
+                    ].filter(Boolean).join(", ")}
+                  </div>
+                </div>
+              </div>
+            )}
+          </Card>
             {devices.length > 1 ? (
               <div className="mt-5 overflow-x-auto border border-slate-200 rounded-md">
                 <table className="w-full text-sm">
