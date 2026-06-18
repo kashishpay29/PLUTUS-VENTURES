@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Plus, Search, Building2, Pencil, Trash2, MapPin, Phone, Mail,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, Upload, FileSpreadsheet, CheckCircle2, AlertTriangle, X
 } from "lucide-react";
 import { api, formatError } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
@@ -17,6 +17,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
 } from "../../components/ui/alert-dialog";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "../../components/ui/dialog";
 
 export default function CompaniesPage() {
   const { user } = useAuth();
@@ -28,6 +31,11 @@ export default function CompaniesPage() {
   const [page, setPage] = useState(1);
   const pageSize = 12;
   const [delTarget, setDelTarget] = useState(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const fileRef = useRef();
   const nav = useNavigate();
 
   const load = async () => {
@@ -60,6 +68,28 @@ export default function CompaniesPage() {
     }
   };
 
+  const runImport = async () => {
+    if (!importFile) return toast.error("Please select a file");
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const form = new FormData();
+      form.append("file", importFile);
+      const { data: res } = await api.post("/companies/bulk-import", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setImportResult(res);
+      if (res.created > 0) {
+        toast.success(`${res.created} companies imported`);
+        load();
+      }
+    } catch (err) {
+      toast.error(formatError(err.response?.data?.detail));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const totalPages = Math.max(1, Math.ceil(data.total / pageSize));
 
   return (
@@ -72,11 +102,20 @@ export default function CompaniesPage() {
             <span className="font-mono font-bold text-navy">{data.total}</span> companies on file
           </p>
         </div>
-        <Link to="/admin/companies/new">
-          <Button className="bg-navy hover:bg-navy/90 text-white rounded-md h-11" data-testid="add-company-btn">
-            <Plus className="w-4 h-4 mr-2" /> Add Company
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            className="h-11 border-navy text-navy hover:bg-navy hover:text-white rounded-md"
+            onClick={() => { setImportFile(null); setImportResult(null); setImportOpen(true); }}
+          >
+            <Upload className="w-4 h-4 mr-2" /> Import Excel
           </Button>
-        </Link>
+          <Link to="/admin/companies/new">
+            <Button className="bg-navy hover:bg-navy/90 text-white rounded-md h-11" data-testid="add-company-btn">
+              <Plus className="w-4 h-4 mr-2" /> Add Company
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <Card className="p-4 rounded-md">
@@ -223,6 +262,89 @@ export default function CompaniesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Bulk Import Dialog */}
+      <Dialog open={importOpen} onOpenChange={(v) => { setImportOpen(v); if (!v) { setImportFile(null); setImportResult(null); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileSpreadsheet className="w-5 h-5 text-emerald-600" /> Import Companies from Excel
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Format hint */}
+          <div className="bg-slate-50 border border-slate-200 rounded-md p-3 text-xs text-slate-600 space-y-1">
+            <div className="font-bold text-slate-700 mb-1">Required column header:</div>
+            <code className="bg-white border border-slate-200 rounded px-1 py-0.5">company_name</code>
+            <div className="font-bold text-slate-700 mt-2 mb-1">Optional columns:</div>
+            <div className="flex flex-wrap gap-1">
+              {["contact_person","phone","email","address","city","state","pincode","gst_number"].map(c => (
+                <code key={c} className="bg-white border border-slate-200 rounded px-1 py-0.5">{c}</code>
+              ))}
+            </div>
+            <div className="text-slate-500 mt-2">Supports .xlsx and .csv — duplicates are skipped automatically.</div>
+          </div>
+
+          {/* File picker */}
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={(e) => { setImportFile(e.target.files[0] || null); setImportResult(null); }}
+          />
+          <div
+            onClick={() => fileRef.current?.click()}
+            className="border-2 border-dashed border-slate-300 rounded-md p-6 text-center cursor-pointer hover:border-navy hover:bg-slate-50 transition-colors"
+          >
+            {importFile ? (
+              <div className="flex items-center justify-center gap-2 text-sm font-semibold text-navy">
+                <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+                {importFile.name}
+                <button onClick={(e) => { e.stopPropagation(); setImportFile(null); setImportResult(null); }}>
+                  <X className="w-4 h-4 text-slate-400 hover:text-red-500" />
+                </button>
+              </div>
+            ) : (
+              <div className="text-slate-500 text-sm">
+                <Upload className="w-6 h-6 mx-auto mb-2 text-slate-400" />
+                Click to select an Excel or CSV file
+              </div>
+            )}
+          </div>
+
+          {/* Result */}
+          {importResult && (
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center gap-2 text-emerald-700 font-semibold">
+                <CheckCircle2 className="w-4 h-4" /> {importResult.created} companies created
+              </div>
+              {importResult.skipped > 0 && (
+                <div className="text-amber-700 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{importResult.skipped} skipped (already exist): {importResult.skipped_names?.join(", ")}</span>
+                </div>
+              )}
+              {importResult.errors?.length > 0 && (
+                <div className="text-red-600 text-xs">
+                  {importResult.errors.map((e, i) => <div key={i}>Row {e.row}: {e.name} — {e.error}</div>)}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setImportOpen(false)}>Close</Button>
+            <Button
+              onClick={runImport}
+              disabled={!importFile || importing}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              {importing ? "Importing…" : "Import"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

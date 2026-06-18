@@ -20,8 +20,10 @@ from typing import List, Optional, Literal, Dict, Any
 
 from fastapi import (
     FastAPI, APIRouter, HTTPException, Depends, Request, Response,
-    Query
+    Query, UploadFile, File
 )
+import io
+import openpyxl
 
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -1278,6 +1280,73 @@ async def create_company(payload: CompanyCreate, admin=Depends(require_sub_admin
     }
     db.companies.insert_one(doc)
     return clean({**doc})
+
+@api.post("/companies/bulk-import", dependencies=[Depends(require_sub_admin)])
+async def bulk_import_companies(
+    file: UploadFile = File(...),
+    admin=Depends(require_sub_admin),
+):
+    """Import companies from an Excel (.xlsx) or CSV file."""
+    content = await file.read()
+    filename = (file.filename or "").lower()
+
+    rows = []
+    if filename.endswith(".csv"):
+        import csv, codecs
+        reader = csv.DictReader(codecs.iterdecode(io.BytesIO(content), "utf-8-sig"))
+        rows = list(reader)
+    elif filename.endswith(".xlsx") or filename.endswith(".xls"):
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+        ws = wb.active
+        headers = [str(c.value or "").strip().lower().replace(" ", "_") for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            rows.append({headers[i]: (str(v).strip() if v is not None else "") for i, v in enumerate(row)})
+    else:
+        raise HTTPException(status_code=400, detail="Only .xlsx or .csv files are supported")
+
+    # Column name aliases
+    ALIASES = {
+        "name": "company_name", "company": "company_name",
+        "contact": "contact_person", "gst": "gst_number",
+        "pin": "pincode", "zip": "pincode",
+    }
+
+    created, skipped, errors = [], [], []
+    for i, raw in enumerate(rows, start=2):
+        row = {ALIASES.get(k, k): v for k, v in raw.items()}
+        name = (row.get("company_name") or "").strip()
+        if not name:
+            continue
+        if db.companies.find_one({"company_name": {"$regex": f"^{name}$", "$options": "i"}}):
+            skipped.append(name)
+            continue
+        try:
+            doc = {
+                "id": new_id(),
+                "company_name": name,
+                "company_code": next_company_code(),
+                "contact_person": row.get("contact_person") or None,
+                "phone": row.get("phone") or None,
+                "email": row.get("email") or None,
+                "address": row.get("address") or None,
+                "gst_number": row.get("gst_number") or None,
+                "city": row.get("city") or None,
+                "state": row.get("state") or None,
+                "pincode": row.get("pincode") or None,
+                "status": "active",
+                "created_by": admin["id"],
+                "created_by_name": admin.get("name", ""),
+                "created_by_role": admin.get("role", ""),
+                "created_at": now_iso(),
+                "updated_at": now_iso(),
+            }
+            db.companies.insert_one(doc)
+            created.append(name)
+        except Exception as e:
+            errors.append({"row": i, "name": name, "error": str(e)})
+
+    return {"created": len(created), "skipped": len(skipped), "errors": errors,
+            "skipped_names": skipped}
 
 @api.put("/companies/{company_id}", dependencies=[Depends(require_sub_admin)])
 async def update_company(company_id: str, payload: CompanyUpdate):
