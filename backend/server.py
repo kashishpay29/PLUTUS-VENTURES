@@ -2192,6 +2192,7 @@ async def list_tickets(
                         "oem_reference_number": 1,
                         "is_deleted": 1,
                         "has_issue": 1,
+                        "travel_cost": 1,
                     }},
                 ]
             }
@@ -2463,6 +2464,62 @@ async def create_service_report(ticket_id: str, payload: ServiceReportCreate,
         "updated_at": now_iso(),
     }})
     return {"ok": True, "pdf_path": pdf_path}
+
+class TravelCostCreate(BaseModel):
+    amount: float
+    notes: Optional[str] = None
+
+class TravelCostReview(BaseModel):
+    action: Literal["approved", "rejected"]
+    admin_note: Optional[str] = None
+
+@api.post("/tickets/{ticket_id}/travel-cost")
+async def submit_travel_cost(
+    ticket_id: str, payload: TravelCostCreate,
+    user=Depends(require_engineer),
+):
+    ticket = db.tickets.find_one({"id": ticket_id})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.get("assigned_engineer_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Not assigned to this ticket")
+    if payload.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than 0")
+    travel_cost = {
+        "amount": round(payload.amount, 2),
+        "notes": payload.notes or "",
+        "status": "pending",
+        "submitted_at": now_iso(),
+        "submitted_by": user["id"],
+        "submitted_by_name": user.get("name", ""),
+        "admin_note": None,
+        "reviewed_at": None,
+    }
+    db.tickets.update_one({"id": ticket_id}, {"$set": {
+        "travel_cost": travel_cost,
+        "updated_at": now_iso(),
+    }})
+    return {"ok": True, "travel_cost": travel_cost}
+
+@api.post("/tickets/{ticket_id}/travel-cost/review")
+async def review_travel_cost(
+    ticket_id: str, payload: TravelCostReview,
+    user=Depends(require_ticket_operator),
+):
+    ticket = db.tickets.find_one({"id": ticket_id})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if not ticket.get("travel_cost"):
+        raise HTTPException(status_code=404, detail="No travel cost submitted")
+    db.tickets.update_one({"id": ticket_id}, {"$set": {
+        "travel_cost.status": payload.action,
+        "travel_cost.admin_note": payload.admin_note or "",
+        "travel_cost.reviewed_at": now_iso(),
+        "travel_cost.reviewed_by": user["id"],
+        "travel_cost.reviewed_by_name": user.get("name", ""),
+        "updated_at": now_iso(),
+    }})
+    return _ticket_full(db.tickets.find_one({"id": ticket_id}, {"_id": 0}))
 
 class TicketAddressUpdate(BaseModel):
     current_address: str

@@ -6,7 +6,7 @@ import {
   ArrowLeft, User as UserIcon, Phone, Building2, Cpu, ShieldCheck,
   FileText, MapPin, Image as ImageIcon, Wrench, CheckCircle2,
   Clock, Activity, Download, BadgeCheck, Wifi, UserCheck, Pencil,
-  ExternalLink, DollarSign, Hash } from "lucide-react";
+  ExternalLink, DollarSign, Hash, Receipt, XCircle } from "lucide-react";
 import { api, formatError, API } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { Input } from "../../components/ui/input";
@@ -43,6 +43,7 @@ export default function TicketDetail() {
   const [editingAddress, setEditingAddress] = useState(false);
   const [addressDraft, setAddressDraft] = useState("");
   const [savingAddress, setSavingAddress] = useState(false);
+  const [reviewingCost, setReviewingCost] = useState(false);
 
  const load = useCallback(async () => {
   try {
@@ -139,6 +140,19 @@ export default function TicketDetail() {
     const token = localStorage.getItem("token");
     const url = `${API}/tickets/${id}/pdf?auth=${token}`;
     window.open(url, "_blank");
+  };
+
+  const reviewTravelCost = async (action) => {
+    setReviewingCost(true);
+    try {
+      const { data } = await api.post(`/tickets/${id}/travel-cost/review`, { action });
+      setTicket(data);
+      toast.success(`Travel cost ${action}`);
+    } catch (err) {
+      toast.error(formatError(err.response?.data?.detail));
+    } finally {
+      setReviewingCost(false);
+    }
   };
 
   const saveAddress = async () => {
@@ -501,6 +515,55 @@ export default function TicketDetail() {
               </button>
             )}
           </Card>
+
+          {/* Travel Cost card */}
+          {ticket.travel_cost && (
+            <Card className="p-5 rounded-md">
+              <div className="flex items-center gap-2 mb-3">
+                <Receipt className="w-4 h-4 text-navy" />
+                <h3 className="text-xs uppercase tracking-[0.2em] text-slate-500 font-bold">Travel Cost</h3>
+                <span className={`ml-auto text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                  ticket.travel_cost.status === "approved" ? "bg-emerald-100 text-emerald-700"
+                  : ticket.travel_cost.status === "rejected" ? "bg-red-100 text-red-700"
+                  : "bg-amber-100 text-amber-700"
+                }`}>
+                  {ticket.travel_cost.status}
+                </span>
+              </div>
+              <div className="text-2xl font-black text-navy font-display mb-1">
+                ₹{Number(ticket.travel_cost.amount).toLocaleString()}
+              </div>
+              <div className="text-xs text-slate-500 mb-1">
+                Submitted by {ticket.travel_cost.submitted_by_name}
+              </div>
+              {ticket.travel_cost.notes && (
+                <div className="text-xs text-slate-600 italic mb-3">{ticket.travel_cost.notes}</div>
+              )}
+              {ticket.travel_cost.admin_note && (
+                <div className="text-xs text-slate-600 bg-slate-50 rounded p-2 mb-3">
+                  Note: {ticket.travel_cost.admin_note}
+                </div>
+              )}
+              {ticket.travel_cost.status === "pending" && canManageOutsource && (
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={() => reviewTravelCost("approved")}
+                    disabled={reviewingCost}
+                    className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md py-2 transition-colors disabled:opacity-50"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+                  </button>
+                  <button
+                    onClick={() => reviewTravelCost("rejected")}
+                    disabled={reviewingCost}
+                    className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-red-500 hover:bg-red-600 rounded-md py-2 transition-colors disabled:opacity-50"
+                  >
+                    <XCircle className="w-3.5 h-3.5" /> Reject
+                  </button>
+                </div>
+              )}
+            </Card>
+          )}
 
           <Card className="p-6 rounded-md">
             <h3 className="text-xs uppercase tracking-[0.2em] text-slate-500 font-bold mb-4 flex items-center gap-2">

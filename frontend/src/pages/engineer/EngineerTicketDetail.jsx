@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import {
   ArrowLeft, CheckCircle2, XCircle, Truck, MapPin, Wrench, FileSignature,
   Camera, Trash2, Plus, Loader2, FileDown, Phone, Cpu, ShieldCheck,
-  Clock, AlertTriangle, Building2, User, Hash
+  Clock, AlertTriangle, Building2, User, Hash, Receipt, DollarSign
 } from "lucide-react";
 import { api, formatError, API } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
@@ -45,6 +45,10 @@ export default function EngineerTicketDetail() {
   const [rejectReason, setRejectReason] = useState("");
   const [reportOpen, setReportOpen] = useState(false);
   const [issueOpen, setIssueOpen] = useState(false);
+  const [costOpen, setCostOpen] = useState(false);
+  const [costAmount, setCostAmount] = useState("");
+  const [costNotes, setCostNotes] = useState("");
+  const [submittingCost, setSubmittingCost] = useState(false);
 
   const load = async () => {
     try {
@@ -64,6 +68,24 @@ export default function EngineerTicketDetail() {
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const submitTravelCost = async () => {
+    const amount = parseFloat(costAmount);
+    if (!amount || amount <= 0) return toast.error("Enter a valid amount");
+    setSubmittingCost(true);
+    try {
+      await api.post(`/tickets/${id}/travel-cost`, { amount, notes: costNotes });
+      toast.success("Travel cost submitted");
+      setCostOpen(false);
+      setCostAmount("");
+      setCostNotes("");
+      load();
+    } catch (err) {
+      toast.error(formatError(err.response?.data?.detail));
+    } finally {
+      setSubmittingCost(false);
+    }
+  };
 
   const sendLocation = async (status) => {
     return new Promise((resolve) => {
@@ -212,6 +234,85 @@ export default function EngineerTicketDetail() {
         >
           <AlertTriangle className="w-4 h-4" /> Report Delay / Issue
         </button>
+      )}
+
+      {/* Travel Cost */}
+      {ticket.travel_cost ? (
+        <Card className="p-4 rounded-md">
+          <div className="flex items-center gap-2 mb-3">
+            <Receipt className="w-4 h-4 text-navy" />
+            <div className="text-xs uppercase tracking-wider font-bold text-slate-500">Travel Cost</div>
+            <span className={`ml-auto text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+              ticket.travel_cost.status === "approved" ? "bg-emerald-100 text-emerald-700"
+              : ticket.travel_cost.status === "rejected" ? "bg-red-100 text-red-700"
+              : "bg-amber-100 text-amber-700"
+            }`}>
+              {ticket.travel_cost.status}
+            </span>
+          </div>
+          <div className="text-2xl font-black text-navy font-display">
+            ₹{Number(ticket.travel_cost.amount).toLocaleString()}
+          </div>
+          {ticket.travel_cost.notes && (
+            <div className="text-xs text-slate-500 mt-1">{ticket.travel_cost.notes}</div>
+          )}
+          {ticket.travel_cost.admin_note && (
+            <div className="mt-2 text-xs text-slate-600 bg-slate-50 rounded p-2 italic">
+              Admin note: {ticket.travel_cost.admin_note}
+            </div>
+          )}
+          {ticket.travel_cost.status === "pending" && (
+            <div className="mt-2 text-xs text-amber-600">Awaiting admin approval</div>
+          )}
+        </Card>
+      ) : (
+        ["accepted", "travelling", "reached_site", "in_progress", "resolved"].includes(ticket.status) && (
+          costOpen ? (
+            <Card className="p-4 rounded-md space-y-3">
+              <div className="flex items-center gap-2">
+                <Receipt className="w-4 h-4 text-navy" />
+                <div className="text-xs uppercase tracking-wider font-bold text-slate-500">Add Travel Cost</div>
+              </div>
+              <div>
+                <Label className="text-xs font-bold">Amount (₹) *</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  className="mt-1"
+                  placeholder="e.g. 250"
+                  value={costAmount}
+                  onChange={(e) => setCostAmount(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <Label className="text-xs font-bold">Notes (optional)</Label>
+                <Input
+                  className="mt-1"
+                  placeholder="e.g. Petrol + auto fare"
+                  value={costNotes}
+                  onChange={(e) => setCostNotes(e.target.value)}
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" onClick={submitTravelCost} disabled={submittingCost}
+                  className="bg-navy hover:bg-navy/90 text-white text-xs h-8">
+                  {submittingCost ? "Submitting…" : "Submit"}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setCostOpen(false)}
+                  className="text-xs h-8">Cancel</Button>
+              </div>
+            </Card>
+          ) : (
+            <button
+              onClick={() => setCostOpen(true)}
+              className="w-full flex items-center justify-center gap-2 p-3 rounded-md border-2 border-dashed border-blue-200 text-blue-600 bg-blue-50/50 font-semibold text-sm hover:bg-blue-50 transition-colors"
+            >
+              <DollarSign className="w-4 h-4" /> Add Travel Cost
+            </button>
+          )
+        )
       )}
 
       {ticket.device_history?.length > 0 && (
