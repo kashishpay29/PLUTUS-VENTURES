@@ -243,7 +243,7 @@ export default function TicketDetail() {
                 </div>
               </div>
             </div>
-          </Card>
+
             {devices.length > 1 ? (
               <div className="mt-5 overflow-x-auto border border-slate-200 rounded-md">
                 <table className="w-full text-sm">
