@@ -26,6 +26,7 @@ export default function TicketDetail() {
   const nav = useNavigate();
   const { user } = useAuth();
   const canCloseOrReport = ["admin", "sub_admin"].includes(user?.role);
+  const canManageOutsource = ["admin", "sub_admin", "ticket_admin"].includes(user?.role);
   const canOutsource = ["admin", "sub_admin", "ticket_admin"].includes(user?.role);
   const canAssign = ["admin", "sub_admin", "ticket_admin"].includes(user?.role);
   const [ticket, setTicket] = useState(null);
@@ -417,7 +418,7 @@ export default function TicketDetail() {
                   </div>
                 )}
                 {ticket.outsource.notes && <div className="text-slate-500 italic mt-1">{ticket.outsource.notes}</div>}
-                {canCloseOrReport && (
+                {canManageOutsource && (
                   <button onClick={downloadOutsourcePdf}
                     className="mt-3 w-full flex items-center justify-center gap-1.5 text-xs font-bold text-orange-700 bg-orange-100 hover:bg-orange-200 rounded-md py-2 transition-colors">
                     <Download className="w-3.5 h-3.5" /> Download internal PDF (accounts)
@@ -427,7 +428,7 @@ export default function TicketDetail() {
             )}
 
             {/* Outsource complete button */}
-            {canCloseOrReport && ticket.is_outsource && !["closed","report_generated"].includes(ticket.status) && (
+            {canManageOutsource && ticket.is_outsource && !["closed","report_generated"].includes(ticket.status) && (
               <button onClick={outsourceComplete} disabled={completing}
                 className="mt-3 w-full flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-orange-500 hover:bg-orange-600 rounded-md py-2 transition-colors disabled:opacity-50">
                 {completing ? "Completing…" : "✓ Mark outsource as completed"}
@@ -435,7 +436,7 @@ export default function TicketDetail() {
             )}
 
             {/* Generate service report button */}
-            {canCloseOrReport && (ticket.is_outsource || ["closed","report_generated"].includes(ticket.status)) && (
+            {canManageOutsource && (ticket.is_outsource || ["closed","report_generated"].includes(ticket.status)) && (
               <button onClick={() => setReportOpen(true)}
                 className="mt-2 w-full flex items-center justify-center gap-1.5 text-xs font-bold text-navy border-2 border-navy hover:bg-navy hover:text-white rounded-md py-2 transition-colors">
                 <FileText className="w-3.5 h-3.5" /> Generate service report
