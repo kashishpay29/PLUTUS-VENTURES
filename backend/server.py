@@ -2291,7 +2291,7 @@ async def assign_ticket(ticket_id: str, payload: TicketAssign,
     return _ticket_full(db.tickets.find_one({"id": ticket_id}, {"_id": 0}))
 
 @api.post("/tickets/{ticket_id}/outsource-complete")
-async def outsource_complete(ticket_id: str, admin=Depends(require_sub_admin)):
+async def outsource_complete(ticket_id: str, admin=Depends(require_ticket_operator)):
     """Mark an outsourced ticket as completed manually by admin/sub-admin."""
     ticket = db.tickets.find_one({"id": ticket_id})
     if not ticket:
@@ -2330,7 +2330,7 @@ async def outsource_internal_pdf(ticket_id: str, auth: Optional[str] = None,
 
 @api.post("/tickets/{ticket_id}/service-report")
 async def create_service_report(ticket_id: str, payload: ServiceReportCreate,
-                                 admin=Depends(require_sub_admin)):
+                                 admin=Depends(require_ticket_operator)):
     """Generate a client-facing service report PDF for outsource or admin-closed tickets."""
     ticket = db.tickets.find_one({"id": ticket_id})
     if not ticket:
