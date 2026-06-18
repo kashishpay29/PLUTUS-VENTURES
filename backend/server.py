@@ -2464,6 +2464,25 @@ async def create_service_report(ticket_id: str, payload: ServiceReportCreate,
     }})
     return {"ok": True, "pdf_path": pdf_path}
 
+class TicketAddressUpdate(BaseModel):
+    current_address: str
+
+@api.patch("/tickets/{ticket_id}/address")
+async def update_ticket_address(
+    ticket_id: str, payload: TicketAddressUpdate,
+    user=Depends(require_ticket_operator),
+):
+    ticket = db.tickets.find_one({"id": ticket_id})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    db.tickets.update_one({"id": ticket_id}, {"$set": {
+        "current_address": payload.current_address.strip(),
+        "updated_at": now_iso(),
+    }})
+    _log_status(ticket_id, user, ticket["status"], ticket["status"],
+                f"Address updated to: {payload.current_address.strip()}")
+    return _ticket_full(db.tickets.find_one({"id": ticket_id}, {"_id": 0}))
+
 @api.post("/tickets/{ticket_id}/status")
 async def update_status(ticket_id: str, payload: StatusUpdate,
                         user=Depends(get_current_user)):

@@ -40,6 +40,9 @@ export default function TicketDetail() {
   const [reportForm, setReportForm] = useState({ work_done: "", resolution_summary: "" });
   const [completing, setCompleting] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [editingAddress, setEditingAddress] = useState(false);
+  const [addressDraft, setAddressDraft] = useState("");
+  const [savingAddress, setSavingAddress] = useState(false);
 
  const load = useCallback(async () => {
   try {
@@ -138,6 +141,21 @@ export default function TicketDetail() {
     window.open(url, "_blank");
   };
 
+  const saveAddress = async () => {
+    if (!addressDraft.trim()) return toast.error("Address cannot be empty");
+    setSavingAddress(true);
+    try {
+      const { data } = await api.patch(`/tickets/${id}/address`, { current_address: addressDraft.trim() });
+      setTicket(data);
+      setEditingAddress(false);
+      toast.success("Address updated");
+    } catch (err) {
+      toast.error(formatError(err.response?.data?.detail));
+    } finally {
+      setSavingAddress(false);
+    }
+  };
+
   if (!ticket) return <div className="text-slate-500">Loading…</div>;
 
   const devices = ticket.devices?.length ? ticket.devices : (ticket.device ? [ticket.device] : []);
@@ -216,32 +234,65 @@ export default function TicketDetail() {
               )}
             </div>
 
-            {/* Address section — always visible */}
+            {/* Address section — always visible, editable by admin/ticket_admin */}
             <div className="mt-4 pt-4 border-t border-slate-100">
-              <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold flex items-center gap-1 mb-3">
-                <MapPin className="w-3 h-3" /> Site Address
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold flex items-center gap-1">
+                  <MapPin className="w-3 h-3" /> Service Address
+                </div>
+                {canAssign && !editingAddress && (
+                  <button
+                    onClick={() => { setAddressDraft(ticket.current_address || ""); setEditingAddress(true); }}
+                    className="flex items-center gap-1 text-[10px] font-bold text-signal hover:underline"
+                  >
+                    <Pencil className="w-3 h-3" /> {ticket.current_address ? "Edit" : "Add address"}
+                  </button>
+                )}
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                <div>
-                  <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">Address</div>
-                  <div className="text-navy">
-                    {ticket.current_address || ticket.company_address ||
-                     ticket.company?.address || ticket.customer_address || "—"}
+
+              {editingAddress ? (
+                <div className="space-y-2">
+                  <textarea
+                    rows={3}
+                    value={addressDraft}
+                    onChange={(e) => setAddressDraft(e.target.value)}
+                    placeholder="Enter service address…"
+                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-navy resize-none"
+                    autoFocus
+                  />
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={saveAddress} disabled={savingAddress}
+                      className="bg-navy hover:bg-navy/90 text-white text-xs h-8">
+                      {savingAddress ? "Saving…" : "Save"}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setEditingAddress(false)}
+                      className="text-xs h-8">
+                      Cancel
+                    </Button>
                   </div>
                 </div>
-                <div>
-                  <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">City</div>
-                  <div className="text-navy">{ticket.company_city || ticket.company?.city || "—"}</div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  <div className="sm:col-span-2">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">Address</div>
+                    <div className={ticket.current_address ? "text-navy" : "text-slate-400 italic"}>
+                      {ticket.current_address || "No service address set"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">City</div>
+                    <div className="text-navy">{ticket.company_city || ticket.company?.city || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">State</div>
+                    <div className="text-navy">{ticket.company_state || ticket.company?.state || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">Pincode</div>
+                    <div className="text-navy">{ticket.company_pincode || ticket.company?.pincode || "—"}</div>
+                  </div>
                 </div>
-                <div>
-                  <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">State</div>
-                  <div className="text-navy">{ticket.company_state || ticket.company?.state || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">Pincode</div>
-                  <div className="text-navy">{ticket.company_pincode || ticket.company?.pincode || "—"}</div>
-                </div>
-              </div>
+              )}
             </div>
 
             {devices.length > 1 ? (
