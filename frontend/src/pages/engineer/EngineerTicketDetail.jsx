@@ -266,7 +266,7 @@ export default function EngineerTicketDetail() {
           )}
         </Card>
       ) : (
-        ["accepted", "travelling", "reached_site", "in_progress", "resolved"].includes(ticket.status) && (
+        ["accepted", "travelling", "reached_site", "in_progress", "resolved", "completed_with_signature", "report_generated"].includes(ticket.status) && (
           costOpen ? (
             <Card className="p-4 rounded-md space-y-3">
               <div className="flex items-center gap-2">
