@@ -25,7 +25,7 @@ export default function TicketDetail() {
   const { id } = useParams();
   const nav = useNavigate();
   const { user } = useAuth();
-  const canCloseOrReport = ["admin", "sub_admin"].includes(user?.role);
+  const canCloseOrReport = ["admin", "sub_admin", "ticket_admin"].includes(user?.role);
   const canManageOutsource = ["admin", "sub_admin", "ticket_admin"].includes(user?.role);
   const canOutsource = ["admin", "sub_admin", "ticket_admin"].includes(user?.role);
   const canAssign = ["admin", "sub_admin", "ticket_admin"].includes(user?.role);

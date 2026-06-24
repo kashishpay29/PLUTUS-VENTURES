@@ -2300,8 +2300,6 @@ async def assign_ticket(ticket_id: str, payload: TicketAssign,
         raise HTTPException(status_code=403, detail="Ticket admins can only reassign active tickets")
 
     if payload.is_outsource:
-        if admin.get("role") == "ticket_admin":
-            raise HTTPException(status_code=403, detail="Ticket admins can only assign internal engineers")
         if not payload.outsource_name:
             raise HTTPException(status_code=400, detail="Outsource engineer name required")
         db.tickets.update_one({"id": ticket_id}, {"$set": {
@@ -2757,7 +2755,7 @@ async def submit_report(ticket_id: str, payload: ReportSubmit,
     return report
 
 @api.post("/tickets/{ticket_id}/approve")
-async def approve_ticket(ticket_id: str, admin=Depends(require_sub_admin)):
+async def approve_ticket(ticket_id: str, admin=Depends(require_ticket_operator)):
     ticket = db.tickets.find_one({"id": ticket_id})
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
